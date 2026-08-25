@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Asteroid Blaster</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- ===== Меню ===== -->
+  <div id="menuScreen" class="screen">
+    <div class="menu-card">
+      <div class="logo">
+        <span class="logo-main">ASTEROID</span><span class="logo-accent">BLASTER</span>
+      </div>
+      <div class="subtitle">Космический шутер: сбивай астероиды, собирай монеты, качай бластер</div>
+
+      <div class="profile-row">
+        <input id="nickInput" maxlength="32" placeholder="Ваш ник" autocomplete="off">
+        <span id="connState" class="conn-state"><span class="dot"></span>подключение…</span>
+      </div>
+
+      <button id="soloBtn" class="btn primary big">Одиночная игра</button>
+      <button id="findBtn" class="btn primary big">Найти соперника <small>(интернет-матч)</small></button>
+
+      <div class="divider">или комната по коду</div>
+      <div class="room-row">
+        <button id="createBtn" class="btn">Создать комнату</button>
+        <input id="joinCodeInput" maxlength="8" placeholder="КОД" autocomplete="off">
+        <button id="joinBtn" class="btn">Войти</button>
+      </div>
+      <div id="menuError" class="menu-error"></div>
+      <div id="recordLine" class="record-line"></div>
+    </div>
+    <div class="help-block">
+      <b>Управление:</b> WASD / стрелки — движение · мышь — прицел · ЛКМ / пробел — огонь · ПКМ / F — ракета · 1, 2 — апгрейды, 3 — жизнь, 4 — ракеты за монеты
+    </div>
+  </div>
+
+  <!-- ===== Ожидание (очередь / комната) ===== -->
+  <div id="waitOverlay" class="overlay hidden">
+    <div class="overlay-card">
+      <h2 id="waitTitle">Поиск соперника…</h2>
+      <div id="waitInfo" class="wait-info"></div>
+      <div id="waitCode" class="wait-code hidden"></div>
+      <button id="waitCancelBtn" class="btn danger">Отмена</button>
+    </div>
+  </div>
+
+  <!-- ===== Игра ===== -->
+  <div id="gameScreen" class="screen hidden">
+    <canvas id="gameCanvas"></canvas>
+    <div id="hud">
+      <div id="hudLeft" class="player-hud"></div>
+      <div class="hud-center">
+        <div id="timerText">0:00</div>
+        <div id="timerSub"></div>
+      </div>
+      <div id="hudRight" class="player-hud right"></div>
+    </div>
+    <div id="upgradeBar">
+      <button class="upg-btn" data-track="damage"><span class="key">1</span> Урон <span class="pips"></span><span class="cost"></span></button>
+      <button class="upg-btn" data-track="firerate"><span class="key">2</span> Скорострельность <span class="pips"></span><span class="cost"></span></button>
+      <button class="upg-btn" data-track="life"><span class="key">3</span> Жизнь <span class="pips"></span><span class="cost"></span></button>
+      <button class="upg-btn" data-track="missiles"><span class="key">4</span> Ракеты ×3 <span class="pips"></span><span class="cost"></span></button>
+    </div>
+    <div id="announce" class="announce hidden"></div>
+    <div id="gameHint" class="game-hint hidden"></div>
+  </div>
+
+  <!-- ===== Результаты ===== -->
+  <div id="overOverlay" class="overlay hidden">
+    <div class="overlay-card wide">
+      <h2 id="overTitle">Матч окончен</h2>
+      <div id="overReason" class="wait-info"></div>
+      <table class="results-table"><thead>
+        <tr><th>Игрок</th><th>Очки</th><th>Астероидов</th><th>Монет</th></tr>
+      </thead><tbody id="overRows"></tbody></table>
+      <div id="overRecord" class="record-line"></div>
+      <div class="btn-row">
+        <button id="againBtn" class="btn primary">Ещё раз</button>
+        <button id="toMenuBtn" class="btn">В меню</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

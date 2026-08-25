@@ -1,0 +1,17 @@
+services:
+  game:
+    build: .
+    container_name: asteroid-blaster
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      LOG_LEVEL: info
+      DB_PATH: /app/data/server.db
+      MATCH_DURATION_MS: 180000
+    volumes:
+      - game-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  game-data:
