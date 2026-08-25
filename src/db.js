@@ -1,95 +1,87 @@
-import { mkdirSync } from 'node:fs';
+// Хранилище игроков и матчей на JSON-файле.
+// Без нативных модулей — образ собирается на любом base image
+// (node:XX-alpine включительно, Python/node-gyp не нужны).
+// API совместим с прежней SQLite-версией: createDb / upsertPlayer /
+// getPlayerStats / submitScore / saveMatch, у дескриптора есть .close().
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+
+const MAX_MATCHES = 1000; // храним последние матчи, чтобы файл не рос бесконечно
 
 export function createDb(dbPath) {
-  mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS players (
-      id TEXT PRIMARY KEY,
-      nickname TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      last_seen_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS matches (
-      id TEXT PRIMARY KEY,
-      room_code TEXT NOT NULL,
-      capacity INTEGER NOT NULL,
-      players TEXT NOT NULL,
-      winner TEXT,
-      created_at INTEGER NOT NULL,
-      ended_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS match_players (
-      match_id TEXT NOT NULL,
-      player_id TEXT NOT NULL,
-      nickname TEXT NOT NULL,
-      is_winner INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (match_id, player_id)
-    );
-  `);
-
-  // лёгкая миграция: колонка личного рекорда
-  const cols = db.prepare('PRAGMA table_info(players)').all().map((c) => c.name);
-  if (!cols.includes('best_score')) {
-    db.exec('ALTER TABLE players ADD COLUMN best_score INTEGER NOT NULL DEFAULT 0');
+  const file = path.resolve(dbPath);
+  mkdirSync(path.dirname(file), { recursive: true });
+  const db = {
+    kind: 'json',
+    path: file,
+    data: { players: {}, matches: [], matchPlayers: [] },
+  };
+  if (existsSync(file)) {
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8'));
+      db.data.players = parsed.players && typeof parsed.players === 'object' ? parsed.players : {};
+      db.data.matches = Array.isArray(parsed.matches) ? parsed.matches : [];
+      db.data.matchPlayers = Array.isArray(parsed.matchPlayers) ? parsed.matchPlayers : [];
+    } catch {
+      // повреждённый файл — начинаем с пустого хранилища
+    }
   }
+  // атомарная запись: сначала во временный файл, затем переименование
+  db.flush = () => {
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, JSON.stringify(db.data));
+    renameSync(tmp, file);
+  };
+  db.close = () => db.flush();
   return db;
 }
 
 export function upsertPlayer(db, playerId, nickname) {
-  db.prepare(`
-    INSERT INTO players (id, nickname, created_at, last_seen_at)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      nickname = excluded.nickname,
-      last_seen_at = excluded.last_seen_at
-  `).run(playerId, nickname, Date.now(), Date.now());
-}
-
-export function getPlayer(db, playerId) {
-  return db.prepare('SELECT * FROM players WHERE id = ?').get(playerId) ?? null;
+  const now = Date.now();
+  const p = db.data.players[playerId];
+  if (!p) {
+    db.data.players[playerId] = { nickname, createdAt: now, lastSeenAt: now, bestScore: 0 };
+  } else {
+    p.nickname = nickname;
+    p.lastSeenAt = now;
+  }
+  db.flush();
 }
 
 export function getPlayerStats(db, playerId) {
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) AS played, COALESCE(SUM(is_winner), 0) AS wins
-       FROM match_players WHERE player_id = ?`
-    )
-    .get(playerId);
-  const player = db.prepare('SELECT best_score FROM players WHERE id = ?').get(playerId);
-  return { played: row.played, wins: row.wins, bestScore: player?.best_score ?? 0 };
+  let played = 0;
+  let wins = 0;
+  for (const mp of db.data.matchPlayers) {
+    if (mp.playerId !== playerId) continue;
+    played++;
+    if (mp.isWinner) wins++;
+  }
+  return { played, wins, bestScore: db.data.players[playerId]?.bestScore ?? 0 };
 }
 
 // Сохраняет рекорд одиночной игры (если побит) и возвращает обновлённую статистику
 export function submitScore(db, playerId, score) {
-  db.prepare(`
-    UPDATE players
-    SET best_score = MAX(best_score, ?), last_seen_at = ?
-    WHERE id = ?
-  `).run(score, Date.now(), playerId);
+  const p = db.data.players[playerId];
+  if (p) {
+    p.bestScore = Math.max(p.bestScore || 0, score);
+    p.lastSeenAt = Date.now();
+    db.flush();
+  }
   return getPlayerStats(db, playerId);
 }
 
 export function saveMatch(db, { id, roomCode, capacity, players, winner, createdAt, endedAt }) {
-  const insertMatch = db.prepare(`
-    INSERT INTO matches (id, room_code, capacity, players, winner, created_at, ended_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertPlayer = db.prepare(`
-    INSERT INTO match_players (match_id, player_id, nickname, is_winner)
-    VALUES (?, ?, ?, ?)
-  `);
-  const tx = db.transaction(() => {
-    insertMatch.run(id, roomCode, capacity, JSON.stringify(players), winner, createdAt, endedAt);
-    for (const p of players) {
-      insertPlayer.run(id, p.playerId, p.nickname, p.playerId === winner ? 1 : 0);
-    }
-  });
-  tx();
+  db.data.matches.push({ id, roomCode, capacity, players, winner, createdAt, endedAt });
+  if (db.data.matches.length > MAX_MATCHES) {
+    db.data.matches.splice(0, db.data.matches.length - MAX_MATCHES);
+  }
+  for (const p of players) {
+    db.data.matchPlayers.push({
+      matchId: id,
+      playerId: p.playerId,
+      nickname: p.nickname,
+      isWinner: p.playerId === winner,
+    });
+  }
+  db.flush();
 }

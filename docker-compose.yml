@@ -7,7 +7,7 @@ services:
     environment:
       PORT: 3000
       LOG_LEVEL: info
-      DB_PATH: /app/data/server.db
+      DB_PATH: /app/data/server.db.json
       MATCH_DURATION_MS: 180000
     volumes:
       - game-data:/app/data
