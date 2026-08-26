@@ -32,6 +32,7 @@ const els = {
   joinBtn: $('joinBtn'),
   menuError: $('menuError'),
   recordLine: $('recordLine'),
+  overImage: $('overImage'),
 };
 
 const canvas = $('gameCanvas');
@@ -170,7 +171,8 @@ function showOver(results, mode) {
   const players = [...(results.players || [])].sort((a, b) => b.score - a.score);
   els.overTitle.textContent =
     results.reason === 'time-up' ? 'Время вышло!' :
-    results.winner ? 'Есть победитель!' : 'Ничья!';
+    results.winner ? 'Есть победитель!' :
+    mode === 'solo' ? 'Проигрыш!' : 'Ничья!';
   els.overReason.textContent =
     results.reason === 'time-up' ? 'Матч завершён по таймеру' : 'Все корабли уничтожены';
 
@@ -184,8 +186,11 @@ function showOver(results, mode) {
 
   if (mode === 'solo' && players[0]) {
     els.overRecord.textContent = `Ваш результат: ${players[0].score} очков · время полёта ${fmtTime(players[0].timeMs ?? 0)}`;
+    els.overImage.classList.remove('hidden');
+  } else if (mode === 'multi' && results.winner && results.winner !== selfId) {
+    els.overImage.classList.remove('hidden');
   } else {
-    els.overRecord.textContent = '';
+    els.overImage.classList.add('hidden');
   }
   els.overOverlay.classList.remove('hidden');
 }

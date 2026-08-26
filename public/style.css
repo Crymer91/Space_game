@@ -100,6 +100,10 @@ input:focus { outline: none; border-color: var(--accent); }
 .results-table td { padding: 7px 10px; border-bottom: 1px solid #20242f; }
 .results-table tr.winner td { color: var(--gold); font-weight: 700; }
 .btn-row { display: flex; gap: 10px; }
+.over-image {
+  width: min(360px, 40vw);
+  border-radius: 14px;
+}
 
 /* ===== Игровой экран ===== */
 #gameScreen { background: #05070c; }
