@@ -49,9 +49,11 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     coins: [],
     enemies: [],
     missiles: [],
+    powerups: [],
     fx: [],
     nextEnemyId: 1,
     nextMissileId: 1,
+    nextPowerupId: 1,
     cometsUnlocked: false,
     enemiesUnlocked: false,
     cometTimerMs: 1000,
@@ -82,6 +84,8 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
       invulnUntil: B.ship.invulnMs, // неуязвимость на старте
       missiles: 0, // боезапас самонаводящихся ракет
       missileCdAt: 0,
+      rapidFireUntil: 0,
+      shieldUntil: 0,
     });
   }
   return world;
@@ -91,8 +95,12 @@ export function bulletDamage(p) {
   return 1 + p.dmgLvl * B.upgrades.damage.dmgPerLevel;
 }
 
-export function fireCooldownMs(p) {
-  return B.ship.fireCooldownMs * Math.pow(B.upgrades.firerate.cooldownFactor, p.rateLvl);
+export function fireCooldownMs(p, now) {
+  let cd = B.ship.fireCooldownMs * Math.pow(B.upgrades.firerate.cooldownFactor, p.rateLvl);
+  if (now != null && now < p.rapidFireUntil) {
+    cd *= B.powerups.types.rapidFire.cooldownFactor;
+  }
+  return cd;
 }
 
 export function upgradeCost(track, level) {
@@ -238,6 +246,22 @@ function spawnCoinBurst(world, x, y, count) {
   }
 }
 
+function spawnPowerup(world, x, y) {
+  const types = Object.keys(B.powerups.types);
+  const tp = types[Math.floor(world.rng() * types.length)];
+  const ang = world.rng() * Math.PI * 2;
+  const sp = rand(world.rng, 30, 100);
+  world.powerups.push({
+    id: world.nextPowerupId++,
+    tp,
+    x,
+    y,
+    vx: Math.cos(ang) * sp,
+    vy: Math.sin(ang) * sp,
+    born: world.t,
+  });
+}
+
 function destroyAsteroid(world, a, owner) {
   const def = asteroidDef(a.type);
   if (owner) {
@@ -246,6 +270,9 @@ function destroyAsteroid(world, a, owner) {
   }
   const coins = randInt(world.rng, def.coinsMin, def.coinsMax);
   if (coins > 0) spawnCoinBurst(world, a.x, a.y, coins);
+  if (a.type === 'comet' && world.rng() < B.powerups.cometChance) {
+    spawnPowerup(world, a.x, a.y);
+  }
   addFx(world, 'boom', a.x, a.y, a.maxHp >= 10 ? 3 : a.maxHp >= 5 ? 2 : 1);
   a.dead = true;
 
@@ -262,6 +289,7 @@ function destroyAsteroid(world, a, owner) {
 }
 
 function shipHit(world, p, now) {
+  if (now < p.shieldUntil) return;
   p.lives--;
   p.deaths++;
   p.alive = false;
@@ -393,6 +421,9 @@ export function killEnemy(world, e, owner) {
     owner.kills++;
   }
   spawnCoinBurst(world, e.x, e.y, randInt(world.rng, B.enemies.coinsMin, B.enemies.coinsMax));
+  if (world.rng() < B.powerups.enemyChance) {
+    spawnPowerup(world, e.x, e.y);
+  }
   addFx(world, 'boom', e.x, e.y, 2.6);
 }
 
@@ -567,7 +598,7 @@ export function stepWorld(world, dtSec, inputs) {
     p.thrust = len > 0.15;
 
     if (inp.shoot && now >= p.cooldownAt) {
-      p.cooldownAt = now + fireCooldownMs(p);
+      p.cooldownAt = now + fireCooldownMs(p, now);
       spawnBullet(world, p);
     }
 
@@ -726,6 +757,44 @@ export function stepWorld(world, dtSec, inputs) {
   }
   world.coins = world.coins.filter((c) => !c.dead);
 
+  // --- powerups ---
+  const PU = B.powerups;
+  const puDamp = Math.exp(-PU.driftDamping * dt);
+  for (const u of world.powerups) {
+    u.vx *= puDamp;
+    u.vy *= puDamp;
+    let target = null;
+    let bestD = PU.magnetRadius;
+    for (const p of world.players) {
+      if (!p.alive || p.out) continue;
+      const d = Math.hypot(p.x - u.x, p.y - u.y);
+      if (d < bestD) { bestD = d; target = p; }
+    }
+    if (target) {
+      const d = Math.max(bestD, 1);
+      u.vx += ((target.x - u.x) / d) * PU.magnetPull * dt;
+      u.vy += ((target.y - u.y) / d) * PU.magnetPull * dt;
+    }
+    u.x += u.vx * dt;
+    u.y += u.vy * dt;
+    u.x = Math.max(PU.radius, Math.min(w - PU.radius, u.x));
+    u.y = Math.max(PU.radius, Math.min(h - PU.radius, u.y));
+
+    if (target && Math.hypot(target.x - u.x, target.y - u.y) < PU.pickupRadius) {
+      u.dead = true;
+      const def = PU.types[u.tp];
+      if (u.tp === 'rapidFire') {
+        target.rapidFireUntil = Math.max(target.rapidFireUntil, now + def.durationMs);
+      } else if (u.tp === 'shield') {
+        target.shieldUntil = Math.max(target.shieldUntil, now + def.durationMs);
+      }
+      addFx(world, 'powerup', u.x, u.y, 1);
+    } else if (now - u.born > PU.lifeMs) {
+      u.dead = true;
+    }
+  }
+  world.powerups = world.powerups.filter((u) => !u.dead);
+
   // --- враги и ракеты ---
   updateEnemies(world, dt, now);
   updateMissiles(world, dt, now);
@@ -812,6 +881,8 @@ export function snapshotOf(world) {
       iv: Math.max(0, p.invulnUntil - world.t),
       th: p.thrust ? 1 : 0,
       mk: p.missiles || 0,
+      rf: world.t < p.rapidFireUntil ? Math.max(0, p.rapidFireUntil - world.t) : 0,
+      sh: world.t < p.shieldUntil ? Math.max(0, p.shieldUntil - world.t) : 0,
     })),
     as: world.asteroids.map((a) => {
       const o = {
@@ -853,6 +924,7 @@ export function snapshotOf(world) {
       a: Math.round(k.a * 100) / 100,
     })),
     cs: world.coins.map((c) => ({ i: c.id, x: Math.round(c.x), y: Math.round(c.y) })),
+    pu: world.powerups.map((u) => ({ i: u.id, tp: u.tp, x: Math.round(u.x), y: Math.round(u.y) })),
     fx: world.fx.map((f) => ({ i: f.id, tp: f.type, x: Math.round(f.x), y: Math.round(f.y), z: f.size })),
   };
 }
