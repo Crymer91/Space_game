@@ -126,6 +126,21 @@ export const BALANCE = {
     blastDamage: 5,
   },
 
+  powerups: {
+    cometChance: 0.25,
+    enemyChance: 0.10,
+    radius: 12,
+    magnetRadius: 56,
+    magnetPull: 380,
+    pickupRadius: 26,
+    lifeMs: 10000,
+    driftDamping: 1.8,
+    types: {
+      rapidFire: { durationMs: 5000, cooldownFactor: 0.5 },
+      shield:    { durationMs: 10000 },
+    },
+  },
+
   matchDurationMs: 180000,
 
   waves: {
