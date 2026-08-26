@@ -61,11 +61,7 @@ export const BALANCE = {
   },
 
   enemies: {
-    unlockScore: 6000,
-    firstSpawnDelayMs: 1500,
-    intervalMinMs: 6500,
-    intervalMaxMs: 11000,
-    maxAlive: 2,
+    maxAlive: 8,
     hp: 4,
     radius: 16,
     score: 150,
@@ -79,6 +75,23 @@ export const BALANCE = {
     preferredDistMin: 230,
     preferredDistMax: 370,
     engageDistMax: 750,
+
+    // Волновая система: противники появляются волнами.
+    // После последней волны цикл повторяется (loop: true).
+    waves: {
+      unlockScore: 6000,
+      initialDelayMs: 2000,
+      defaultCooldownMs: 15000,
+      loop: true,
+      sequence: [
+        // Волна 1: по 1 шт, каждые 20 с в течение 60 с → суммарно 3 за минуту
+        { count: 1, intervalMs: 20000, durationMs: 60000 },
+        // Волна 2: по 2 шт, каждые 10 с в течение 60 с → суммарно 6 за минуту
+        { count: 2, intervalMs: 10000, durationMs: 60000, cooldownMs: 20000 },
+        // Волна 3: по 3 шт, каждые ~6.7 с в течение 60 с → суммарно 9 за минуту
+        { count: 3, intervalMs: 6700,  durationMs: 60000, cooldownMs: 30000 },
+      ],
+    },
   },
 
   coin: {
