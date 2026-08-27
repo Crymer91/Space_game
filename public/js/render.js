@@ -12,6 +12,7 @@ const FX_COLORS = {
   shoot: ['#fff2b0'],
   spawn: ['#5ad0ff', '#bff1ff'],
   upgrade: ['#7dff9e', '#d2ffde'],
+  powerup: ['#ff6ba8', '#5ad0ff', '#ffffff'],
 };
 
 function hashRand(seed) {
@@ -169,6 +170,34 @@ export function createRenderer(canvas) {
       ctx.beginPath();
       ctx.arc(c.x - 2.6, c.y - 2.6, 3.1 * pulse, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    // powerups
+    const PU_COLORS = { rapidFire: '#ff6ba8', shield: '#5ad0ff' };
+    const PU_GLOW = { rapidFire: 'rgba(255,107,168,.4)', shield: 'rgba(90,208,255,.4)' };
+    for (const u of (s.pu || [])) {
+      const color = PU_COLORS[u.tp] || '#ffffff';
+      const glow = PU_GLOW[u.tp] || 'rgba(255,255,255,.3)';
+      const pulse = 1 + 0.18 * Math.sin(now * 6 + u.i);
+      const r = 12 * pulse;
+      ctx.save();
+      ctx.translate(u.x, u.y);
+      ctx.rotate(now * 2 + u.i);
+      ctx.shadowColor = glow;
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(0, -r);
+      ctx.lineTo(r * 0.6, 0);
+      ctx.lineTo(0, r);
+      ctx.lineTo(-r * 0.6, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.restore();
     }
 
     // астероиды и кометы
@@ -351,9 +380,10 @@ export function createRenderer(canvas) {
       ctx.arc(2, 0, 3.4, 0, Math.PI * 2);
       ctx.fill();
 
-      if (p.iv > 0) { // щит неуязвимости
-        ctx.globalAlpha = 0.5 + 0.3 * Math.sin(now * 10);
-        ctx.strokeStyle = '#bff1ff';
+      if (p.iv > 0 || p.sh > 0) { // щит неуязвимости
+        const shieldActive = p.iv > 0 || p.sh > 0;
+        ctx.globalAlpha = shieldActive ? (0.5 + 0.3 * Math.sin(now * 10)) : 0.35;
+        ctx.strokeStyle = p.sh > 0 && p.iv <= 0 ? '#5ad0ff' : '#bff1ff';
         ctx.lineWidth = 1.6;
         ctx.beginPath();
         ctx.arc(0, 0, 24, 0, Math.PI * 2);
@@ -388,6 +418,7 @@ export function createRenderer(canvas) {
     right: document.getElementById('hudRight'),
     timer: document.getElementById('timerText'),
     timerSub: document.getElementById('timerSub'),
+    boost: document.getElementById('boostIndicator'),
     upgBtns: [...document.querySelectorAll('.upg-btn')],
   };
   const hudCache = {};
@@ -490,6 +521,21 @@ export function createRenderer(canvas) {
       if (hudEls.timer.textContent !== timerText) hudEls.timer.textContent = timerText;
       const sub = opts.subText || (opts.solo ? 'время полёта' : 'до конца матча');
       if (hudEls.timerSub.textContent !== sub) hudEls.timerSub.textContent = sub;
+
+      if (hudEls.boost) {
+        const me2 = ps.find((p) => p.i === selfId);
+        if (me2 && me2.rf > 0) {
+          hudEls.boost.textContent = `СТРЕЛЬБА ×2 ${Math.ceil(me2.rf / 1000)}с`;
+          hudEls.boost.style.color = '#ff6ba8';
+          hudEls.boost.classList.remove('hidden');
+        } else if (me2 && me2.sh > 0) {
+          hudEls.boost.textContent = `ЩИТ ${Math.ceil(me2.sh / 1000)}с`;
+          hudEls.boost.style.color = '#5ad0ff';
+          hudEls.boost.classList.remove('hidden');
+        } else {
+          hudEls.boost.classList.add('hidden');
+        }
+      }
     },
 
     onFx(fn) { onFxSound = fn; },

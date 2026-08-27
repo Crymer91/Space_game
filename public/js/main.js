@@ -121,6 +121,7 @@ renderer.onFx((f, state) => {
     case 'coin': tone({ type: 'sine', from: 880, to: 1420, dur: 0.09, vol: 0.09 * vol }); break;
     case 'spawn': tone({ type: 'sine', from: 280, to: 940, dur: 0.22, vol: 0.08 * vol }); break;
     case 'upgrade': tone({ type: 'sine', from: 620, to: 620, dur: 0.09, vol: 0.09 * vol }); tone({ type: 'sine', from: 930, to: 930, dur: 0.12, vol: 0.08 * vol }); break;
+    case 'powerup': tone({ type: 'sine', from: 520, to: 780, dur: 0.12, vol: 0.1 * vol }); setTimeout(() => tone({ type: 'sine', from: 780, to: 1040, dur: 0.15, vol: 0.09 * vol }), 80); break;
   }
 });
 document.addEventListener('pointerdown', ensureAudio, { once: true });
