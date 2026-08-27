@@ -93,8 +93,10 @@ export function startMultiGame({ net, renderer, input, selfId, onOver, onBuyResu
     });
     const boByIdA = new Map((a.bo||[]).map(x=>[x.i,x]));
     const crByIdA = new Map((a.cr||[]).map(x=>[x.i,x]));
+    const puByIdA = new Map((a.pu||[]).map(x=>[x.i,x]));
     const bo = (b.bo||[]).map(x=>{ const xa=boByIdA.get(x.i); return xa?{...x,x:lerp(xa.x,x.x,t), y:lerp(xa.y,x.y,t), a:lerpAngle(xa.a,x.a,t)}:x; });
     const cr = (b.cr||[]).map(x=>{ const xa=crByIdA.get(x.i); return xa?{...x,x:lerp(xa.x,x.x,t), y:lerp(xa.y,x.y,t)}:x; });
+    const pu = (b.pu||[]).map(x=>{ const xa=puByIdA.get(x.i); return xa?{...x,x:lerp(xa.x,x.x,t), y:lerp(xa.y,x.y,t)}:x; });
     const esByIdA = new Map((a.es || []).map((x) => [x.i, x]));
     const rkByIdA = new Map((a.rk || []).map((x) => [x.i, x]));
     const es = (b.es || []).map((x) => {
@@ -105,7 +107,7 @@ export function startMultiGame({ net, renderer, input, selfId, onOver, onBuyResu
       const xa = rkByIdA.get(x.i);
       return xa ? { ...x, x: lerp(xa.x, x.x, t), y: lerp(xa.y, x.y, t), a: lerpAngle(xa.a, x.a, t) } : x;
     });
-    return { ...b, ps, as, cs, bo, cr, es, rk, mn:b.mn||a.mn, ls:b.ls||a.ls };
+    return { ...b, ps, as, cs, pu: pu||b.pu||a.pu, bo, cr, es, rk, mn:b.mn||a.mn, ls:b.ls||a.ls };
   }
 
   function frame() {

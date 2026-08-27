@@ -126,6 +126,21 @@ export const BALANCE = {
     blastDamage: 5,
   },
 
+  powerups: {
+    cometChance: 0.25,
+    enemyChance: 0.10,
+    radius: 12,
+    magnetRadius: 56,
+    magnetPull: 380,
+    pickupRadius: 26,
+    lifeMs: 10000,
+    driftDamping: 1.8,
+    types: {
+      rapidFire: { durationMs: 5000, cooldownFactor: 0.5 },
+      shield:    { durationMs: 10000 },
+    },
+  },
+
   bosses: {
     thresholds: [10000, 20000, 30000],
     types: {
@@ -137,10 +152,11 @@ export const BALANCE = {
       },
       phantom: {
         key: 'phantom', name: 'Фантом',
-        score: 20000, hp: 95, radius: 44, scoreReward: 850,
+        score: 20000, hp: 125, radius: 46, scoreReward: 900,
         accel: 220, maxSpeed: 165, turnRate: 2.8,
         fireCooldownMs: 700, bulletSpeed: 460, bulletCount: 1,
         strafeSpeed: 140,
+        mineIntervalMs: 5500,
       },
       leviathan: {
         key: 'leviathan', name: 'Левиафан',

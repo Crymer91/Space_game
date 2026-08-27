@@ -174,6 +174,36 @@ export function createRenderer(canvas) {
       ctx.fill();
     }
 
+    // powerups (щит/ускорение)
+    const PU_COLORS = { rapidFire: '#ff6ba8', shield: '#5ad0ff' };
+    const PU_GLOW = { rapidFire: 'rgba(255,107,168,.6)', shield: 'rgba(90,208,255,.6)' };
+    for (const u of (s.pu || [])) {
+      const color = PU_COLORS[u.tp] || '#ffffff';
+      const glow = PU_GLOW[u.tp] || 'rgba(255,255,255,.3)';
+      const pulse = 1 + 0.18 * Math.sin(now * 6 + u.i);
+      const r = 12 * pulse;
+      ctx.save();
+      ctx.translate(u.x, u.y);
+      ctx.rotate(now * 2 + u.i);
+      ctx.shadowColor = glow;
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(0, -r);
+      ctx.lineTo(r * 0.6, 0);
+      ctx.lineTo(0, r);
+      ctx.lineTo(-r * 0.6, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,.9)';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(u.tp === 'rapidFire' ? '⚡' : '🛡', 0, 1);
+      ctx.restore();
+    }
+
     // астероиды и кометы
     const TYPE_FILL = { small: '#8f97ab', medium: '#767f96', large: '#5f687e', comet: '#cfe8ff' };
     for (const a of s.as) {
@@ -631,7 +661,8 @@ export function createRenderer(canvas) {
             parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${active?'#4a0e1a': ab.lc<=0?'#3a1a2a':'#222'};color:#ff7a9e;border:1px solid #6e2a3a">Q ЛАЗЕР ${active? Math.ceil(ab.la/1000)+'с' : fmt(ab.lc)}</span>`);
           }
           if (ab.mn) {
-            parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.mc<=0?'#2a2a0e':'#222'};color:#ffd27a;border:1px solid #6e5a2a">E МИНЫ ${ab.ml}/5 ${ab.mc>0? '('+fmt(ab.mc)+')':''}</span>`);
+            const maxM = ab.mx||5;
+            parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.mc<=0?'#2a2a0e':'#222'};color:#ffd27a;border:1px solid #6e5a2a">E МИНЫ ${ab.ml}/${maxM} ${ab.mc>0? '('+fmt(ab.mc)+')':''}</span>`);
           }
           if(!ab.ar && !ab.ls && !ab.mn) parts.push(`<span style="opacity:.5;font-size:12px">Боссы 10k/20k/30k → кристаллы способностей</span>`);
           hudEls.abilityBar.innerHTML = parts.join('');
