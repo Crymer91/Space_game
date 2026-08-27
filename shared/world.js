@@ -57,7 +57,14 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     cometsUnlocked: false,
     enemiesUnlocked: false,
     cometTimerMs: 1000,
-    enemyTimerMs: B.enemies.firstSpawnDelayMs,
+    enemyWave: {
+      phase: 'locked',       // 'locked' | 'cooldown' | 'active'
+      index: 0,              // текущий индекс волны
+      timerMs: 0,            // таймер текущей фазы
+      spawnCdMs: 0,          // кулдаун между спавнами внутри волны
+      spawned: 0,            // сколько раз спавнили за текущую волну
+      completed: 0,          // сколько волн пройдено (для UI)
+    },
   };
   let i = 0;
   for (const id of playerIds) {
@@ -825,9 +832,13 @@ export function stepWorld(world, dtSec, inputs) {
     world.cometTimerMs = 600;
     addFx(world, 'warning', w / 2, 100, 1);
   }
-  if (!world.enemiesUnlocked && maxScore >= B.enemies.unlockScore) {
+  if (!world.enemiesUnlocked && maxScore >= B.enemies.waves.unlockScore) {
     world.enemiesUnlocked = true;
-    world.enemyTimerMs = B.enemies.firstSpawnDelayMs;
+    world.enemyWave.phase = 'cooldown';
+    world.enemyWave.timerMs = B.enemies.waves.initialDelayMs;
+    world.enemyWave.index = 0;
+    world.enemyWave.spawned = 0;
+    world.enemyWave.completed = 0;
     addFx(world, 'warning', w / 2, 140, 2);
   }
   if (world.cometsUnlocked) {
@@ -838,10 +849,42 @@ export function stepWorld(world, dtSec, inputs) {
     }
   }
   if (world.enemiesUnlocked) {
-    world.enemyTimerMs -= dt * 1000;
-    if (world.enemyTimerMs <= 0) {
-      world.enemyTimerMs += rand(world.rng, B.enemies.intervalMinMs, B.enemies.intervalMaxMs);
-      if (world.enemies.length < B.enemies.maxAlive) spawnEnemy(world);
+    const EW = B.enemies.waves;
+    const wave = EW.sequence[world.enemyWave.index % EW.sequence.length];
+
+    if (world.enemyWave.phase === 'cooldown') {
+      world.enemyWave.timerMs -= dt * 1000;
+      if (world.enemyWave.timerMs <= 0) {
+        world.enemyWave.phase = 'active';
+        world.enemyWave.timerMs = wave.durationMs;
+        world.enemyWave.spawnCdMs = 0;
+        world.enemyWave.spawned = 0;
+      }
+    }
+
+    if (world.enemyWave.phase === 'active') {
+      world.enemyWave.timerMs -= dt * 1000;
+      world.enemyWave.spawnCdMs -= dt * 1000;
+
+      if (world.enemyWave.spawnCdMs <= 0) {
+        world.enemyWave.spawnCdMs += wave.intervalMs;
+        for (let i = 0; i < wave.count; i++) {
+          if (world.enemies.length < B.enemies.maxAlive) spawnEnemy(world);
+        }
+        world.enemyWave.spawned++;
+      }
+
+      if (world.enemyWave.timerMs <= 0) {
+        world.enemyWave.completed++;
+        world.enemyWave.phase = 'cooldown';
+        const cooldown = wave.cooldownMs != null ? wave.cooldownMs : EW.defaultCooldownMs;
+        if (world.enemyWave.index < EW.sequence.length - 1 || EW.loop) {
+          world.enemyWave.timerMs = cooldown;
+        } else {
+          world.enemyWave.phase = 'locked';
+        }
+        world.enemyWave.index = (world.enemyWave.index + 1) % EW.sequence.length;
+      }
     }
   }
 
@@ -861,6 +904,12 @@ export function snapshotOf(world) {
     st: world.status,
     t: Math.round(world.t),
     tl: world.timeLeftMs == null ? null : Math.round(world.timeLeftMs),
+    ew: world.enemiesUnlocked ? {
+      ph: world.enemyWave.phase,
+      ix: world.enemyWave.index % B.enemies.waves.sequence.length,
+      tl: Math.round(Math.max(0, world.enemyWave.timerMs)),
+      cp: world.enemyWave.completed,
+    } : undefined,
     ps: world.players.map((p) => ({
       i: p.id,
       n: p.nick,
