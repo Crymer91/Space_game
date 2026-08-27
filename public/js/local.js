@@ -27,6 +27,10 @@ export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult 
       if (onBuyResult) onBuyResult(res);
     }
 
+    // лазер/мины — по одному срабатыванию на нажатие
+    let pendingLaser=false, pendingMine=false;
+    if (input.wantsLaser()) { pendingLaser = input.consumeLaser(); }
+    if (input.wantsMine()) { pendingMine = input.consumeMine(); }
     while (acc >= STEP && !finished) {
       acc -= STEP;
       const me = world.players[0];
@@ -38,8 +42,11 @@ export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult 
           aim: me.alive ? input.getAim(me.x, me.y) : undefined,
           shoot: me.alive ? input.isShooting() : false,
           mis: me.alive ? input.wantsMissile() : false,
+          laser: me.alive ? pendingLaser : false,
+          mine: me.alive ? pendingMine : false,
         },
       });
+      pendingLaser=false; pendingMine=false;
       if (world.status === 'over') {
         finished = true;
         break;

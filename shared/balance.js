@@ -61,7 +61,11 @@ export const BALANCE = {
   },
 
   enemies: {
-    maxAlive: 8,
+    unlockScore: 6000,
+    firstSpawnDelayMs: 1500,
+    intervalMinMs: 6500,
+    intervalMaxMs: 11000,
+    maxAlive: 2,
     hp: 4,
     radius: 16,
     score: 150,
@@ -75,23 +79,6 @@ export const BALANCE = {
     preferredDistMin: 230,
     preferredDistMax: 370,
     engageDistMax: 750,
-
-    // Волновая система: противники появляются волнами.
-    // После последней волны цикл повторяется (loop: true).
-    waves: {
-      unlockScore: 6000,
-      initialDelayMs: 2000,
-      defaultCooldownMs: 15000,
-      loop: true,
-      sequence: [
-        // Волна 1: по 1 шт, каждые 20 с в течение 60 с → суммарно 3 за минуту
-        { count: 1, intervalMs: 20000, durationMs: 60000 },
-        // Волна 2: по 2 шт, каждые 10 с в течение 60 с → суммарно 6 за минуту
-        { count: 2, intervalMs: 10000, durationMs: 60000, cooldownMs: 20000 },
-        // Волна 3: по 3 шт, каждые ~6.7 с в течение 60 с → суммарно 9 за минуту
-        { count: 3, intervalMs: 6700,  durationMs: 60000, cooldownMs: 30000 },
-      ],
-    },
   },
 
   coin: {
@@ -139,19 +126,49 @@ export const BALANCE = {
     blastDamage: 5,
   },
 
-  powerups: {
-    cometChance: 0.25,
-    enemyChance: 0.10,
-    radius: 12,
-    magnetRadius: 56,
-    magnetPull: 380,
-    pickupRadius: 26,
-    lifeMs: 10000,
-    driftDamping: 1.8,
+  bosses: {
+    thresholds: [10000, 20000, 30000],
     types: {
-      rapidFire: { durationMs: 5000, cooldownFactor: 0.5 },
-      shield:    { durationMs: 10000 },
+      dreadnought: {
+        key: 'dreadnought', name: 'Дредноут',
+        score: 10000, hp: 70, radius: 52, scoreReward: 600,
+        accel: 90, maxSpeed: 95, turnRate: 1.6,
+        fireCooldownMs: 900, bulletSpeed: 380, bulletCount: 3, spread: 0.22,
+      },
+      phantom: {
+        key: 'phantom', name: 'Фантом',
+        score: 20000, hp: 95, radius: 44, scoreReward: 850,
+        accel: 220, maxSpeed: 165, turnRate: 2.8,
+        fireCooldownMs: 700, bulletSpeed: 460, bulletCount: 1,
+        strafeSpeed: 140,
+      },
+      leviathan: {
+        key: 'leviathan', name: 'Левиафан',
+        score: 30000, hp: 140, radius: 60, scoreReward: 1200,
+        accel: 70, maxSpeed: 105, turnRate: 1.2,
+        fireCooldownMs: 1200, bulletSpeed: 340, bulletCount: 8, // круговой залп
+      },
     },
+  },
+
+  crystals: {
+    coinValue: 1000,            // 1 кристал = 1000 монет
+    lifeMs: 18000,
+    radius: 14,
+    magnetRadius: 90,
+    pickupRadius: 30,
+    driftDamping: 1.2,
+  },
+
+  abilities: {
+    armor:  { name: 'Броня', charges: 2, regenMs: 15000 },
+    laser:  { name: 'Лазер', durationMs: 5000, cooldownMs: 90000, dps: 18, width: 14, tickMs: 90 },
+    mines:  { name: 'Мины', max: 5, cooldownMs: 180000, blastRadius: 115, blastDamage: 7, chainRadius: 210, maxChain: 6, armMs: 400 },
+  },
+
+  mine: {
+    radius: 10,
+    lifeMs: 25000,
   },
 
   matchDurationMs: 180000,

@@ -32,7 +32,6 @@ const els = {
   joinBtn: $('joinBtn'),
   menuError: $('menuError'),
   recordLine: $('recordLine'),
-  overImage: $('overImage'),
 };
 
 const canvas = $('gameCanvas');
@@ -96,7 +95,8 @@ function noiseBurst({ dur = 0.35, vol = 0.25, cutoff = 900 }) {
 renderer.onFx((f, state) => {
   // глобальные оповещения об угрозах — без приглушения по расстоянию
   if (f.tp === 'warning') {
-    showAnnounce(f.z === 2 ? '⚠ ВРАЖЕСКИЕ КОРАБЛИ!' : '⚠ СКОРОСТНЫЕ КОМЕТЫ!');
+    if (f.z >= 3) showAnnounce(f.z===3?'☠ БОСС ДРЕДНОУТ!':f.z===4?'☠ БОСС ФАНТОМ!':'☠ БОСС ЛЕВИАФАН!');
+    else showAnnounce(f.z === 2 ? '⚠ ВРАЖЕСКИЕ КОРАБЛИ!' : '⚠ СКОРОСТНЫЕ КОМЕТЫ!');
     tone({ type: 'sawtooth', from: 620, to: 330, dur: 0.42, vol: 0.12 });
     setTimeout(() => tone({ type: 'sawtooth', from: 620, to: 330, dur: 0.42, vol: 0.12 }), 500);
     return;
@@ -122,7 +122,9 @@ renderer.onFx((f, state) => {
     case 'coin': tone({ type: 'sine', from: 880, to: 1420, dur: 0.09, vol: 0.09 * vol }); break;
     case 'spawn': tone({ type: 'sine', from: 280, to: 940, dur: 0.22, vol: 0.08 * vol }); break;
     case 'upgrade': tone({ type: 'sine', from: 620, to: 620, dur: 0.09, vol: 0.09 * vol }); tone({ type: 'sine', from: 930, to: 930, dur: 0.12, vol: 0.08 * vol }); break;
-    case 'powerup': tone({ type: 'sine', from: 520, to: 780, dur: 0.12, vol: 0.1 * vol }); setTimeout(() => tone({ type: 'sine', from: 780, to: 1040, dur: 0.15, vol: 0.09 * vol }), 80); break;
+    case 'shield': tone({ type: 'sine', from: 400, to: 800, dur: 0.18, vol: 0.09 * vol }); break;
+    case 'laser': noiseBurst({ dur: 0.35, vol: 0.12*vol, cutoff: 2200 }); break;
+    case 'mine': tone({ type: 'triangle', from: 180, to: 90, dur: 0.15, vol: 0.08*vol }); break;
   }
 });
 document.addEventListener('pointerdown', ensureAudio, { once: true });
@@ -172,8 +174,7 @@ function showOver(results, mode) {
   const players = [...(results.players || [])].sort((a, b) => b.score - a.score);
   els.overTitle.textContent =
     results.reason === 'time-up' ? 'Время вышло!' :
-    results.winner ? 'Есть победитель!' :
-    mode === 'solo' ? 'Проигрыш!' : 'Ничья!';
+    results.winner ? 'Есть победитель!' : 'Ничья!';
   els.overReason.textContent =
     results.reason === 'time-up' ? 'Матч завершён по таймеру' : 'Все корабли уничтожены';
 
@@ -187,11 +188,8 @@ function showOver(results, mode) {
 
   if (mode === 'solo' && players[0]) {
     els.overRecord.textContent = `Ваш результат: ${players[0].score} очков · время полёта ${fmtTime(players[0].timeMs ?? 0)}`;
-    els.overImage.classList.remove('hidden');
-  } else if (mode === 'multi' && results.winner && results.winner !== selfId) {
-    els.overImage.classList.remove('hidden');
   } else {
-    els.overImage.classList.add('hidden');
+    els.overRecord.textContent = '';
   }
   els.overOverlay.classList.remove('hidden');
 }

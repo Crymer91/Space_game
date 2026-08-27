@@ -29,7 +29,7 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
-const EMPTY_INPUT = Object.freeze({ mx: 0, my: 0, aim: undefined, shoot: false });
+const EMPTY_INPUT = Object.freeze({ mx: 0, my: 0, aim: undefined, shoot: false, mis:false, laser:false, mine:false });
 
 export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDurationMs, seed = 1 }) {
   const world = {
@@ -49,22 +49,22 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     coins: [],
     enemies: [],
     missiles: [],
-    powerups: [],
     fx: [],
+    bosses: [],
+    crystals: [],
+    mines: [],
+    lasers: [],
     nextEnemyId: 1,
     nextMissileId: 1,
-    nextPowerupId: 1,
+    nextBossId: 1,
+    nextCrystalId: 1,
+    nextMineId: 1,
+    nextLaserId: 1,
     cometsUnlocked: false,
     enemiesUnlocked: false,
     cometTimerMs: 1000,
-    enemyWave: {
-      phase: 'locked',       // 'locked' | 'cooldown' | 'active'
-      index: 0,              // текущий индекс волны
-      timerMs: 0,            // таймер текущей фазы
-      spawnCdMs: 0,          // кулдаун между спавнами внутри волны
-      spawned: 0,            // сколько раз спавнили за текущую волну
-      completed: 0,          // сколько волн пройдено (для UI)
-    },
+    enemyTimerMs: B.enemies.firstSpawnDelayMs,
+    bossSpawned: [false, false, false],
   };
   let i = 0;
   for (const id of playerIds) {
@@ -91,8 +91,16 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
       invulnUntil: B.ship.invulnMs, // неуязвимость на старте
       missiles: 0, // боезапас самонаводящихся ракет
       missileCdAt: 0,
-      rapidFireUntil: 0,
-      shieldUntil: 0,
+      // способности от боссов
+      hasArmor: false,
+      armorCharges: 0,
+      armorRegenAt: 0,
+      hasLaser: false,
+      laserActiveUntil: 0,
+      laserCdUntil: 0,
+      laserTickAt: 0,
+      hasMines: false,
+      mineCdUntil: 0,
     });
   }
   return world;
@@ -102,12 +110,8 @@ export function bulletDamage(p) {
   return 1 + p.dmgLvl * B.upgrades.damage.dmgPerLevel;
 }
 
-export function fireCooldownMs(p, now) {
-  let cd = B.ship.fireCooldownMs * Math.pow(B.upgrades.firerate.cooldownFactor, p.rateLvl);
-  if (now != null && now < p.rapidFireUntil) {
-    cd *= B.powerups.types.rapidFire.cooldownFactor;
-  }
-  return cd;
+export function fireCooldownMs(p) {
+  return B.ship.fireCooldownMs * Math.pow(B.upgrades.firerate.cooldownFactor, p.rateLvl);
 }
 
 export function upgradeCost(track, level) {
@@ -253,22 +257,6 @@ function spawnCoinBurst(world, x, y, count) {
   }
 }
 
-function spawnPowerup(world, x, y) {
-  const types = Object.keys(B.powerups.types);
-  const tp = types[Math.floor(world.rng() * types.length)];
-  const ang = world.rng() * Math.PI * 2;
-  const sp = rand(world.rng, 30, 100);
-  world.powerups.push({
-    id: world.nextPowerupId++,
-    tp,
-    x,
-    y,
-    vx: Math.cos(ang) * sp,
-    vy: Math.sin(ang) * sp,
-    born: world.t,
-  });
-}
-
 function destroyAsteroid(world, a, owner) {
   const def = asteroidDef(a.type);
   if (owner) {
@@ -277,9 +265,6 @@ function destroyAsteroid(world, a, owner) {
   }
   const coins = randInt(world.rng, def.coinsMin, def.coinsMax);
   if (coins > 0) spawnCoinBurst(world, a.x, a.y, coins);
-  if (a.type === 'comet' && world.rng() < B.powerups.cometChance) {
-    spawnPowerup(world, a.x, a.y);
-  }
   addFx(world, 'boom', a.x, a.y, a.maxHp >= 10 ? 3 : a.maxHp >= 5 ? 2 : 1);
   a.dead = true;
 
@@ -295,8 +280,54 @@ function destroyAsteroid(world, a, owner) {
   }
 }
 
+function grantAbility(world, p, kind) {
+  if (kind === 'armor' && !p.hasArmor) {
+    p.hasArmor = true;
+    p.armorCharges = B.abilities.armor.charges;
+    p.armorRegenAt = 0;
+    addFx(world, 'upgrade', p.x, p.y, 2);
+    return true;
+  }
+  if (kind === 'laser' && !p.hasLaser) {
+    p.hasLaser = true;
+    p.laserCdUntil = 0;
+    p.laserActiveUntil = 0;
+    addFx(world, 'upgrade', p.x, p.y, 2);
+    return true;
+  }
+  if (kind === 'mines' && !p.hasMines) {
+    p.hasMines = true;
+    p.mineCdUntil = 0;
+    addFx(world, 'upgrade', p.x, p.y, 2);
+    return true;
+  }
+  return false;
+}
+
+function spawnCrystal(world, x, y, kind, ability) {
+  const C = B.crystals;
+  const ang = world.rng() * Math.PI * 2;
+  const sp = rand(world.rng, 30, 90);
+  world.crystals.push({
+    id: world.nextCrystalId++,
+    x, y,
+    vx: Math.cos(ang) * sp,
+    vy: Math.sin(ang) * sp,
+    kind, // 'coins' | 'ability'
+    ability: ability || null,
+    born: world.t,
+  });
+}
+
 function shipHit(world, p, now) {
-  if (now < p.shieldUntil) return;
+  // броня поглощает урон без потери жизни
+  if (p.hasArmor && p.armorCharges > 0) {
+    p.armorCharges--;
+    if (p.armorCharges <= 0) p.armorRegenAt = now + B.abilities.armor.regenMs;
+    p.invulnUntil = now + 800; // короткая неуязвимость чтобы не заспамить
+    addFx(world, 'shield', p.x, p.y, 1.4);
+    return;
+  }
   p.lives--;
   p.deaths++;
   p.alive = false;
@@ -428,9 +459,6 @@ export function killEnemy(world, e, owner) {
     owner.kills++;
   }
   spawnCoinBurst(world, e.x, e.y, randInt(world.rng, B.enemies.coinsMin, B.enemies.coinsMax));
-  if (world.rng() < B.powerups.enemyChance) {
-    spawnPowerup(world, e.x, e.y);
-  }
   addFx(world, 'boom', e.x, e.y, 2.6);
 }
 
@@ -501,6 +529,219 @@ function updateEnemies(world, dt, now) {
   world.enemies = world.enemies.filter((en) => !en.dead);
 }
 
+// --- боссы ---
+function bossDef(key) { return B.bosses.types[key]; }
+function thresholdKey(idx) { return ['dreadnought','phantom','leviathan'][idx]; }
+
+function spawnBoss(world, idx) {
+  const key = thresholdKey(idx);
+  const def = bossDef(key);
+  if (!def) return;
+  const w = B.world.width;
+  const h = B.world.height;
+  const x = w/2 + rand(world.rng,-180,180);
+  const y = -80;
+  world.bosses.push({
+    id: 'bo'+ world.nextBossId++,
+    key,
+    x, y, vx:0, vy:0, a: Math.PI/2,
+    hp: def.hp, maxHp: def.hp,
+    fireCdAt: world.t + 900,
+  });
+  world.bossSpawned[idx]=true;
+  addFx(world,'warning', w/2, 90, 3);
+  addFx(world,'spawn', x, y, 3);
+}
+
+function destroyBoss(world, boss, owner) {
+  boss.dead=true;
+  const def = bossDef(boss.key);
+  if (owner) { owner.score += def.scoreReward; owner.kills += 3; }
+  else {
+    // если босса добил не игрок — очки лидеру
+    let best=null; for(const p of world.players) if(!best||p.score>best.score) best=p;
+    if(best) best.score += Math.floor(def.scoreReward*0.5);
+  }
+  addFx(world,'boom', boss.x, boss.y, 4.2);
+  // дроп: кристалл монет 1000 + кристалл способности рандом
+  const ang = world.rng()*Math.PI*2;
+  spawnCrystal(world, boss.x + Math.cos(ang)*30, boss.y + Math.sin(ang)*30, 'coins');
+  // выбор способности: рандом из неполученных у владельца, иначе рандом общий
+  const pool = ['armor','laser','mines'];
+  let choice = pool[Math.floor(world.rng()*pool.length)];
+  if (owner) {
+    const need = pool.filter(k=> (k==='armor'&&!owner.hasArmor)||(k==='laser'&&!owner.hasLaser)||(k==='mines'&&!owner.hasMines));
+    if (need.length) choice = need[Math.floor(world.rng()*need.length)];
+  }
+  const ang2 = ang+Math.PI;
+  spawnCrystal(world, boss.x + Math.cos(ang2)*30, boss.y + Math.sin(ang2)*30, 'ability', choice);
+}
+
+function updateBosses(world, dt, now) {
+  const w = B.world.width, h=B.world.height;
+  for(const b of world.bosses){
+    if(b.dead) continue;
+    const def=bossDef(b.key);
+    // цель ближайший живой игрок
+    let target=null, bd=Infinity;
+    for(const p of world.players){ if(!p.alive||p.out) continue; const d=Math.hypot(p.x-b.x,p.y-b.y); if(d<bd){bd=d; target=p;} }
+    let ax=0, ay=0;
+    if(target){
+      const nx=(target.x-b.x)/(bd||1), ny=(target.y-b.y)/(bd||1);
+      if(b.key==='phantom'){
+        if(bd>320) {ax=nx; ay=ny;} else if(bd<210){ax=-nx; ay=-ny;} else {ax=-ny; ay=nx;}
+      } else if(b.key==='leviathan'){
+        if(bd>380){ax=nx*0.6; ay=ny*0.6;} else if(bd<250){ax=-nx*0.5; ay=-ny*0.5;} else { ax=Math.cos(now*0.0007)*0.5; ay=Math.sin(now*0.0007)*0.5; }
+      } else { // dreadnought
+        if(bd>340){ax=nx; ay=ny;} else if(bd<220){ax=-nx*0.4; ay=-ny*0.4;}
+      }
+      // поворот
+      const want=Math.atan2(target.y - b.y, target.x - b.x);
+      let da=(want-b.a)%(Math.PI*2); if(da>Math.PI)da-=Math.PI*2; if(da<-Math.PI)da+=Math.PI*2;
+      b.a += Math.max(-def.turnRate*dt, Math.min(def.turnRate*dt, da));
+      // стрельба
+      if(now>=b.fireCdAt && bd< 820){
+        b.fireCdAt = now + def.fireCooldownMs * rand(world.rng,0.85,1.25);
+        if(b.key==='leviathan'){
+          for(let k=0;k<def.bulletCount;k++){
+            const ang = (k/def.bulletCount)*Math.PI*2;
+            world.bullets.push({ id: world.nextBulletId++, x:b.x, y:b.y, vx: Math.cos(ang)*def.bulletSpeed, vy: Math.sin(ang)*def.bulletSpeed, a:ang, enemy:true, born:world.t });
+          }
+          addFx(world,'shoot', b.x,b.y,2);
+        } else if(b.key==='dreadnought'){
+          for(let k=-1;k<=1;k++){
+            const ang=b.a + k*def.spread;
+            world.bullets.push({ id: world.nextBulletId++, x:b.x+Math.cos(ang)*(def.radius+6), y:b.y+Math.sin(ang)*(def.radius+6), vx:Math.cos(ang)*def.bulletSpeed, vy:Math.sin(ang)*def.bulletSpeed, a:ang, enemy:true, born:world.t });
+          }
+          addFx(world,'shoot', b.x+Math.cos(b.a)*(def.radius+6), b.y+Math.sin(b.a)*(def.radius+6),2);
+        } else {
+          world.bullets.push({ id: world.nextBulletId++, x:b.x+Math.cos(b.a)*(def.radius+6), y:b.y+Math.sin(b.a)*(def.radius+6), vx:Math.cos(b.a)*def.bulletSpeed, vy:Math.sin(b.a)*def.bulletSpeed, a:b.a, enemy:true, born:world.t });
+          addFx(world,'shoot', b.x,b.y,1);
+        }
+      }
+    }
+    b.vx += ax * def.accel * dt;
+    b.vy += ay * def.accel * dt;
+    const damp=Math.exp(-1.8*dt); b.vx*=damp; b.vy*=damp;
+    const sp=Math.hypot(b.vx,b.vy); if(sp>def.maxSpeed){ b.vx*=def.maxSpeed/sp; b.vy*=def.maxSpeed/sp; }
+    b.x += b.vx*dt; b.y += b.vy*dt;
+    b.x=Math.max(def.radius, Math.min(w-def.radius,b.x));
+    b.y=Math.max(def.radius, Math.min(h-def.radius,b.y));
+  }
+  world.bosses = world.bosses.filter(b=>!b.dead);
+}
+
+// --- лазеры и мины ---
+function pointToSegDist(px,py, x1,y1,x2,y2){
+  const vx=x2-x1, vy=y2-y1, wx=px-x1, wy=py-y1;
+  const c1 = vx*wx+vy*wy; if(c1<=0) return Math.hypot(px-x1,py-y1);
+  const c2=vx*vx+vy*vy; if(c2<=c1) return Math.hypot(px-x2,py-y2);
+  const t=c1/c2; const bx=x1+vx*t, by=y1+vy*t; return Math.hypot(px-bx,py-by);
+}
+function detonateMine(world, mine, owner){
+  if(mine.dead) return; mine.dead=true;
+  const M=B.abilities.mines;
+  addFx(world,'boom', mine.x,mine.y, 2.2);
+  const R=M.blastRadius; const CR=M.chainRadius;
+  // собрать цели в R и цепи
+  const hitAsteroids=[];
+  for(const a of world.asteroids){ if(a.dead) continue; if(Math.hypot(a.x-mine.x,a.y-mine.y) <= R + a.r*0.5){ hitAsteroids.push(a); }}
+  const hitEnemies=[];
+  for(const e of world.enemies){ if(e.dead) continue; if(Math.hypot(e.x-mine.x,e.y-mine.y)<=R){ hitEnemies.push(e); }}
+  const hitBosses=[];
+  for(const b of world.bosses){ if(b.dead) continue; if(Math.hypot(b.x-mine.x,b.y-mine.y)<= R + B.bosses.types[b.key].radius*0.6){ hitBosses.push(b); }}
+  // цепь: если попали — взрываем ближайших до maxChain в CR
+  let primaries = hitAsteroids.length+hitEnemies.length+hitBosses.length;
+  if(primaries>0){
+    // собрать кандидатов вокруг точки взрыва
+    const candidates=[];
+    for(const a of world.asteroids){ if(a.dead||hitAsteroids.includes(a)) continue; const d=Math.hypot(a.x-mine.x,a.y-mine.y); if(d<=CR + a.r) candidates.push({obj:a, kind:'a', d}); }
+    for(const e of world.enemies){ if(e.dead||hitEnemies.includes(e)) continue; const d=Math.hypot(e.x-mine.x,e.y-mine.y); if(d<=CR) candidates.push({obj:e, kind:'e', d}); }
+    for(const b of world.bosses){ if(b.dead||hitBosses.includes(b)) continue; const d=Math.hypot(b.x-mine.x,b.y-mine.y); if(d<=CR) candidates.push({obj:b, kind:'b', d}); }
+    candidates.sort((u,v)=>u.d-v.d);
+    for(let i=0;i<Math.min(M.maxChain, candidates.length);i++){
+      const c=candidates[i]; if(c.kind==='a') hitAsteroids.push(c.obj); else if(c.kind==='e') hitEnemies.push(c.obj); else hitBosses.push(c.obj);
+    }
+  }
+  for(const a of hitAsteroids){ a.hp -= M.blastDamage; if(a.hp<=0) destroyAsteroid(world,a,owner); else addFx(world,'hit',a.x,a.y,1); }
+  for(const e of hitEnemies){ e.hp -= M.blastDamage; if(e.hp<=0) killEnemy(world,e,owner); }
+  for(const b of hitBosses){ b.hp -= M.blastDamage; if(b.hp<=0) destroyBoss(world,b,owner); }
+}
+
+function updateMines(world, dt, now){
+  for(const m of world.mines){
+    if(world.t - m.born < B.abilities.mines.armMs) continue;
+    let tripped=false;
+    for(const a of world.asteroids){ if(Math.hypot(a.x-m.x,a.y-m.y) <= B.abilities.mines.blastRadius*0.55 + a.r*0.5){ tripped=true; break; } }
+    if(!tripped) for(const e of world.enemies){ if(Math.hypot(e.x-m.x,e.y-m.y) <= B.abilities.mines.blastRadius*0.45){ tripped=true; break; } }
+    if(!tripped) for(const b of world.bosses){ if(Math.hypot(b.x-m.x,b.y-m.y) <= B.abilities.mines.blastRadius*0.55){ tripped=true; break; } }
+    if(tripped){
+      const owner = world.players.find(p=>p.id===m.owner)||null;
+      detonateMine(world,m,owner);
+    }
+    if(now - m.born > B.mine.lifeMs) m.dead=true;
+  }
+  world.mines = world.mines.filter(m=>!m.dead);
+}
+
+function updateLasers(world, dt, now){
+  for(const ls of world.lasers){
+    if(now >= ls.until){ ls.dead=true; continue; }
+    const p = world.players.find(pl=>pl.id===ls.owner);
+    if(!p||!p.alive){ ls.dead=true; continue; }
+    // лазер следует за кораблём
+    const W=B.world.width, H=B.world.height;
+    const len = Math.hypot(W,H) + 120;
+    const x2 = p.x + Math.cos(p.a)*len;
+    const y2 = p.y + Math.sin(p.a)*len;
+    const x1b = p.x + Math.cos(p.a+Math.PI)*len;
+    const y1b = p.y + Math.sin(p.a+Math.PI)*len;
+    ls.x = p.x; ls.y = p.y; ls.a = p.a;
+    if(now < (ls.nextTick||0)) continue;
+    ls.nextTick = now + B.abilities.laser.tickMs;
+    const ownerP = p;
+    const wHalf = B.abilities.laser.width;
+    const checkLine=(x1,y1,x2a,y2a)=>{
+      for(const a of world.asteroids){ if(a.dead) continue; if(pointToSegDist(a.x,a.y,x1,y1,x2a,y2a) <= a.r + wHalf){ a.hp -= B.abilities.laser.dps * (B.abilities.laser.tickMs/1000); if(a.hp<=0) destroyAsteroid(world,a,ownerP); }}
+      for(const e of world.enemies){ if(e.dead) continue; if(pointToSegDist(e.x,e.y,x1,y1,x2a,y2a) <= B.enemies.radius + wHalf){ e.hp -= B.abilities.laser.dps * (B.abilities.laser.tickMs/1000); if(e.hp<=0) killEnemy(world,e,ownerP); }}
+      for(const b of world.bosses){ if(b.dead) continue; const r=B.bosses.types[b.key].radius; if(pointToSegDist(b.x,b.y,x1,y1,x2a,y2a) <= r + wHalf){ b.hp -= B.abilities.laser.dps * (B.abilities.laser.tickMs/1000); if(b.hp<=0) destroyBoss(world,b,ownerP); }}
+    };
+    checkLine(p.x,p.y,x2,y2);
+    checkLine(p.x,p.y,x1b,y1b);
+  }
+  world.lasers = world.lasers.filter(l=>!l.dead);
+}
+
+function updateCrystals(world, dt, now){
+  const C=B.crystals;
+  const damp=Math.exp(-C.driftDamping*dt);
+  for(const cr of world.crystals){
+    cr.vx*=damp; cr.vy*=damp;
+    let target=null, best=C.magnetRadius;
+    for(const p of world.players){ if(!p.alive||p.out) continue; const d=Math.hypot(p.x-cr.x,p.y-cr.y); if(d<best){best=d; target=p;}}
+    if(target){
+      const d=Math.max(best,1);
+      cr.vx += ((target.x-cr.x)/d)*420*dt;
+      cr.vy += ((target.y-cr.y)/d)*420*dt;
+    }
+    cr.x += cr.vx*dt; cr.y += cr.vy*dt;
+    cr.x=Math.max(C.radius, Math.min(B.world.width-C.radius, cr.x));
+    cr.y=Math.max(C.radius, Math.min(B.world.height-C.radius, cr.y));
+    if(target && Math.hypot(target.x-cr.x,target.y-cr.y) < C.pickupRadius){
+      cr.dead=true;
+      if(cr.kind==='coins'){
+        target.coins += C.coinValue;
+        target.score += C.coinValue;
+        addFx(world,'coin', cr.x, cr.y, 2);
+      } else {
+        const ok = grantAbility(world,target,cr.ability);
+        if(!ok){ target.coins += 500; target.score += 500; addFx(world,'coin',cr.x,cr.y,1); }
+      }
+    } else if(now - cr.born > C.lifeMs) cr.dead=true;
+  }
+  world.crystals = world.crystals.filter(c=>!c.dead);
+}
+
 // --- самонаводящиеся ракеты ---
 
 function detonateMissile(world, k, small = false) {
@@ -524,6 +765,14 @@ function detonateMissile(world, k, small = false) {
     if (Math.hypot(en.x - k.x, en.y - k.y) <= R) {
       en.hp -= dmg;
       if (en.hp <= 0) killEnemy(world, en, owner);
+    }
+  }
+  for (const boss of world.bosses) {
+    if (boss.dead) continue;
+    const def = B.bosses.types[boss.key];
+    if (Math.hypot(boss.x - k.x, boss.y - k.y) <= R + def.radius*0.35) {
+      boss.hp -= dmg;
+      if (boss.hp <= 0) destroyBoss(world, boss, owner);
     }
   }
 }
@@ -605,7 +854,7 @@ export function stepWorld(world, dtSec, inputs) {
     p.thrust = len > 0.15;
 
     if (inp.shoot && now >= p.cooldownAt) {
-      p.cooldownAt = now + fireCooldownMs(p, now);
+      p.cooldownAt = now + fireCooldownMs(p);
       spawnBullet(world, p);
     }
 
@@ -623,6 +872,38 @@ export function stepWorld(world, dtSec, inputs) {
         born: world.t,
       });
       addFx(world, 'shoot', p.x + Math.cos(p.a) * S.radius, p.y + Math.sin(p.a) * S.radius, 1);
+    }
+
+    // регенерация брони
+    if (p.hasArmor && p.armorCharges < B.abilities.armor.charges && p.armorRegenAt && now >= p.armorRegenAt) {
+      p.armorCharges = B.abilities.armor.charges;
+      p.armorRegenAt = 0;
+      addFx(world, 'shield', p.x, p.y, 1.2);
+    }
+    // лазер: Q
+    if (inp.laser && p.hasLaser && now >= (p.laserCdUntil||0) && now >= (p.laserActiveUntil||0)) {
+      p.laserActiveUntil = now + B.abilities.laser.durationMs;
+      p.laserCdUntil = now + B.abilities.laser.cooldownMs;
+      p.laserTickAt = now;
+      world.lasers.push({ id: world.nextLaserId++, owner: p.id, x:p.x, y:p.y, a:p.a, until: p.laserActiveUntil, nextTick: now });
+      addFx(world, 'laser', p.x, p.y, 2);
+    }
+    // мины: E
+    if (inp.mine && p.hasMines && now >= (p.mineCdUntil||0)) {
+      const aliveMines = world.mines.filter(m=>m.owner===p.id && !m.dead).length;
+      if (aliveMines < B.abilities.mines.max) {
+        world.mines.push({ id: world.nextMineId++, owner: p.id, x: p.x, y: p.y, vx:0, vy:0, born: world.t });
+        addFx(world, 'mine', p.x, p.y, 1);
+        if (aliveMines+1 >= B.abilities.mines.max) {
+          p.mineCdUntil = now + B.abilities.mines.cooldownMs;
+        }
+      } else {
+        p.mineCdUntil = now + B.abilities.mines.cooldownMs;
+      }
+    }
+    // сброс КД мин если все взорвались
+    if (p.hasMines && p.mineCdUntil && world.mines.filter(m=>m.owner===p.id).length===0 && now >= p.mineCdUntil) {
+      // КД уже прошёл — ничего
     }
   }
 
@@ -699,6 +980,28 @@ export function stepWorld(world, dtSec, inputs) {
   }
   world.enemies = world.enemies.filter((e) => !e.dead);
 
+  // --- столкновения: пули игроков × боссы ---
+  for (const b of world.bullets) {
+    if (b.dead || b.enemy) continue;
+    for (const boss of world.bosses) {
+      if (boss.dead) continue;
+      const def = B.bosses.types[boss.key];
+      const dx = boss.x - b.x;
+      const dy = boss.y - b.y;
+      const rr = def.radius + B.bullet.radius;
+      if (dx * dx + dy * dy <= rr * rr) {
+        const owner = world.players.find((p) => p.id === b.owner) || null;
+        boss.hp -= owner ? bulletDamage(owner) : 1;
+        b.dead = true;
+        if (boss.hp <= 0) destroyBoss(world, boss, owner);
+        else addFx(world, 'hit', b.x, b.y, 1);
+        break;
+      }
+    }
+  }
+  world.bosses = world.bosses.filter((boss) => !boss.dead);
+  world.bullets = world.bullets.filter((b) => !b.dead);
+
   // --- столкновения: корабли × всё опасное ---
   for (const p of world.players) {
     if (!p.alive || p.out || now < p.invulnUntil) continue;
@@ -723,6 +1026,15 @@ export function stepWorld(world, dtSec, inputs) {
         const dx = e.x - p.x;
         const dy = e.y - p.y;
         const rr = e.r == undefined ? B.enemies.radius + S.radius * 0.85 : e.r + S.radius * 0.85;
+        if (dx * dx + dy * dy <= rr * rr) { hit = true; break; }
+      }
+    }
+    if (!hit) {
+      for (const boss of world.bosses) {
+        const def = B.bosses.types[boss.key];
+        const dx = boss.x - p.x;
+        const dy = boss.y - p.y;
+        const rr = def.radius + S.radius * 0.85;
         if (dx * dx + dy * dy <= rr * rr) { hit = true; break; }
       }
     }
@@ -764,51 +1076,21 @@ export function stepWorld(world, dtSec, inputs) {
   }
   world.coins = world.coins.filter((c) => !c.dead);
 
-  // --- powerups ---
-  const PU = B.powerups;
-  const puDamp = Math.exp(-PU.driftDamping * dt);
-  for (const u of world.powerups) {
-    u.vx *= puDamp;
-    u.vy *= puDamp;
-    let target = null;
-    let bestD = PU.magnetRadius;
-    for (const p of world.players) {
-      if (!p.alive || p.out) continue;
-      const d = Math.hypot(p.x - u.x, p.y - u.y);
-      if (d < bestD) { bestD = d; target = p; }
-    }
-    if (target) {
-      const d = Math.max(bestD, 1);
-      u.vx += ((target.x - u.x) / d) * PU.magnetPull * dt;
-      u.vy += ((target.y - u.y) / d) * PU.magnetPull * dt;
-    }
-    u.x += u.vx * dt;
-    u.y += u.vy * dt;
-    u.x = Math.max(PU.radius, Math.min(w - PU.radius, u.x));
-    u.y = Math.max(PU.radius, Math.min(h - PU.radius, u.y));
-
-    if (target && Math.hypot(target.x - u.x, target.y - u.y) < PU.pickupRadius) {
-      u.dead = true;
-      const def = PU.types[u.tp];
-      if (u.tp === 'rapidFire') {
-        target.rapidFireUntil = Math.max(target.rapidFireUntil, now + def.durationMs);
-      } else if (u.tp === 'shield') {
-        target.shieldUntil = Math.max(target.shieldUntil, now + def.durationMs);
-      }
-      addFx(world, 'powerup', u.x, u.y, 1);
-    } else if (now - u.born > PU.lifeMs) {
-      u.dead = true;
-    }
-  }
-  world.powerups = world.powerups.filter((u) => !u.dead);
-
-  // --- враги и ракеты ---
+  // --- враги, боссы, ракеты, способности ---
   updateEnemies(world, dt, now);
+  updateBosses(world, dt, now);
   updateMissiles(world, dt, now);
+  updateMines(world, dt, now);
+  updateLasers(world, dt, now);
+  updateCrystals(world, dt, now);
   // уничтоженное здесь же убираем из мира, чтобы не попало в снапшот
   world.enemies = world.enemies.filter((e) => !e.dead);
+  world.bosses = world.bosses.filter((b) => !b.dead);
   world.missiles = world.missiles.filter((k) => !k.dead);
   world.asteroids = world.asteroids.filter((a) => !a.dead);
+  world.mines = world.mines.filter((m) => !m.dead);
+  world.crystals = world.crystals.filter((c) => !c.dead);
+  world.lasers = world.lasers.filter((l) => !l.dead);
 
   // --- эффекты: удаляем старше 600 мс ---
   world.fx = world.fx.filter((f) => now - f.bornAt < 600);
@@ -832,13 +1114,9 @@ export function stepWorld(world, dtSec, inputs) {
     world.cometTimerMs = 600;
     addFx(world, 'warning', w / 2, 100, 1);
   }
-  if (!world.enemiesUnlocked && maxScore >= B.enemies.waves.unlockScore) {
+  if (!world.enemiesUnlocked && maxScore >= B.enemies.unlockScore) {
     world.enemiesUnlocked = true;
-    world.enemyWave.phase = 'cooldown';
-    world.enemyWave.timerMs = B.enemies.waves.initialDelayMs;
-    world.enemyWave.index = 0;
-    world.enemyWave.spawned = 0;
-    world.enemyWave.completed = 0;
+    world.enemyTimerMs = B.enemies.firstSpawnDelayMs;
     addFx(world, 'warning', w / 2, 140, 2);
   }
   if (world.cometsUnlocked) {
@@ -849,42 +1127,18 @@ export function stepWorld(world, dtSec, inputs) {
     }
   }
   if (world.enemiesUnlocked) {
-    const EW = B.enemies.waves;
-    const wave = EW.sequence[world.enemyWave.index % EW.sequence.length];
-
-    if (world.enemyWave.phase === 'cooldown') {
-      world.enemyWave.timerMs -= dt * 1000;
-      if (world.enemyWave.timerMs <= 0) {
-        world.enemyWave.phase = 'active';
-        world.enemyWave.timerMs = wave.durationMs;
-        world.enemyWave.spawnCdMs = 0;
-        world.enemyWave.spawned = 0;
-      }
+    world.enemyTimerMs -= dt * 1000;
+    if (world.enemyTimerMs <= 0) {
+      world.enemyTimerMs += rand(world.rng, B.enemies.intervalMinMs, B.enemies.intervalMaxMs);
+      if (world.enemies.length < B.enemies.maxAlive) spawnEnemy(world);
     }
-
-    if (world.enemyWave.phase === 'active') {
-      world.enemyWave.timerMs -= dt * 1000;
-      world.enemyWave.spawnCdMs -= dt * 1000;
-
-      if (world.enemyWave.spawnCdMs <= 0) {
-        world.enemyWave.spawnCdMs += wave.intervalMs;
-        for (let i = 0; i < wave.count; i++) {
-          if (world.enemies.length < B.enemies.maxAlive) spawnEnemy(world);
-        }
-        world.enemyWave.spawned++;
-      }
-
-      if (world.enemyWave.timerMs <= 0) {
-        world.enemyWave.completed++;
-        world.enemyWave.phase = 'cooldown';
-        const cooldown = wave.cooldownMs != null ? wave.cooldownMs : EW.defaultCooldownMs;
-        if (world.enemyWave.index < EW.sequence.length - 1 || EW.loop) {
-          world.enemyWave.timerMs = cooldown;
-        } else {
-          world.enemyWave.phase = 'locked';
-        }
-        world.enemyWave.index = (world.enemyWave.index + 1) % EW.sequence.length;
-      }
+  }
+  // --- боссы по достижении счёта ---
+  for (let i = 0; i < B.bosses.thresholds.length; i++) {
+    if (!world.bossSpawned[i] && maxScore >= B.bosses.thresholds[i]) {
+      spawnBoss(world, i);
+      // объявляем имя босса
+      addFx(world, 'warning', w / 2, 90 + i * 20, 3 + i);
     }
   }
 
@@ -904,12 +1158,6 @@ export function snapshotOf(world) {
     st: world.status,
     t: Math.round(world.t),
     tl: world.timeLeftMs == null ? null : Math.round(world.timeLeftMs),
-    ew: world.enemiesUnlocked ? {
-      ph: world.enemyWave.phase,
-      ix: world.enemyWave.index % B.enemies.waves.sequence.length,
-      tl: Math.round(Math.max(0, world.enemyWave.timerMs)),
-      cp: world.enemyWave.completed,
-    } : undefined,
     ps: world.players.map((p) => ({
       i: p.id,
       n: p.nick,
@@ -930,8 +1178,11 @@ export function snapshotOf(world) {
       iv: Math.max(0, p.invulnUntil - world.t),
       th: p.thrust ? 1 : 0,
       mk: p.missiles || 0,
-      rf: world.t < p.rapidFireUntil ? Math.max(0, p.rapidFireUntil - world.t) : 0,
-      sh: world.t < p.shieldUntil ? Math.max(0, p.shieldUntil - world.t) : 0,
+      ab: {
+        ar: p.hasArmor ? 1 : 0, ac: p.armorCharges||0, arCd: Math.max(0, (p.armorRegenAt||0)-world.t),
+        ls: p.hasLaser ? 1 : 0, lc: Math.max(0,(p.laserCdUntil||0)-world.t), la: Math.max(0,(p.laserActiveUntil||0)-world.t),
+        mn: p.hasMines ? 1 : 0, mc: Math.max(0,(p.mineCdUntil||0)-world.t), ml: world.mines.filter(m=>m.owner===p.id).length,
+      },
     })),
     as: world.asteroids.map((a) => {
       const o = {
@@ -973,7 +1224,10 @@ export function snapshotOf(world) {
       a: Math.round(k.a * 100) / 100,
     })),
     cs: world.coins.map((c) => ({ i: c.id, x: Math.round(c.x), y: Math.round(c.y) })),
-    pu: world.powerups.map((u) => ({ i: u.id, tp: u.tp, x: Math.round(u.x), y: Math.round(u.y) })),
+    bo: world.bosses.map((b)=>({ i:b.id, k:b.key, x:Math.round(b.x*10)/10, y:Math.round(b.y*10)/10, a:Math.round(b.a*100)/100, h:b.hp, hm:b.maxHp })),
+    cr: world.crystals.map((c)=>({ i:c.id, x:Math.round(c.x), y:Math.round(c.y), k:c.kind, ab:c.ability||undefined })),
+    mn: world.mines.map((m)=>({ i:m.id, x:Math.round(m.x), y:Math.round(m.y) })),
+    ls: world.lasers.map((l)=>({ i:l.id, x:Math.round(l.x), y:Math.round(l.y), a:Math.round(l.a*100)/100, o:l.owner })),
     fx: world.fx.map((f) => ({ i: f.id, tp: f.type, x: Math.round(f.x), y: Math.round(f.y), z: f.size })),
   };
 }

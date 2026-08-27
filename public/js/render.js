@@ -12,7 +12,9 @@ const FX_COLORS = {
   shoot: ['#fff2b0'],
   spawn: ['#5ad0ff', '#bff1ff'],
   upgrade: ['#7dff9e', '#d2ffde'],
-  powerup: ['#ff6ba8', '#5ad0ff', '#ffffff'],
+  shield: ['#7dd8ff', '#bff1ff'],
+  laser: ['#ff5a66', '#ffb0b8'],
+  mine: ['#ffb458', '#ffd08a'],
 };
 
 function hashRand(seed) {
@@ -172,34 +174,6 @@ export function createRenderer(canvas) {
       ctx.fill();
     }
 
-    // powerups
-    const PU_COLORS = { rapidFire: '#ff6ba8', shield: '#5ad0ff' };
-    const PU_GLOW = { rapidFire: 'rgba(255,107,168,.4)', shield: 'rgba(90,208,255,.4)' };
-    for (const u of (s.pu || [])) {
-      const color = PU_COLORS[u.tp] || '#ffffff';
-      const glow = PU_GLOW[u.tp] || 'rgba(255,255,255,.3)';
-      const pulse = 1 + 0.18 * Math.sin(now * 6 + u.i);
-      const r = 12 * pulse;
-      ctx.save();
-      ctx.translate(u.x, u.y);
-      ctx.rotate(now * 2 + u.i);
-      ctx.shadowColor = glow;
-      ctx.shadowBlur = 16;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(0, -r);
-      ctx.lineTo(r * 0.6, 0);
-      ctx.lineTo(0, r);
-      ctx.lineTo(-r * 0.6, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.4;
-      ctx.stroke();
-      ctx.restore();
-    }
-
     // астероиды и кометы
     const TYPE_FILL = { small: '#8f97ab', medium: '#767f96', large: '#5f687e', comet: '#cfe8ff' };
     for (const a of s.as) {
@@ -342,6 +316,107 @@ export function createRenderer(canvas) {
       }
     }
 
+    // кристаллы (1 = 1000 монет и способности)
+    for (const cr of (s.cr || [])) {
+      const pulse = 1 + 0.14*Math.sin(now*4 + cr.i);
+      const isCoin = cr.k === 'coins';
+      const col = isCoin ? '#ffd75e' : (cr.ab==='armor' ? '#7dd8ff' : cr.ab==='laser' ? '#ff6b9e' : '#7dff9e');
+      const stroke = isCoin ? '#8a6a1d' : '#1a1a2e';
+      ctx.save();
+      ctx.translate(cr.x, cr.y);
+      ctx.rotate(now*1.2);
+      ctx.scale(pulse, pulse);
+      ctx.fillStyle = col;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      // ромб
+      ctx.moveTo(0, -14); ctx.lineTo(10, 0); ctx.lineTo(0, 14); ctx.lineTo(-10, 0); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(4, 0); ctx.lineTo(0, 8); ctx.lineTo(-4, 0); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      // подпись
+      ctx.fillStyle = isCoin ? '#ffd75e' : col;
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign='center';
+      ctx.fillText(isCoin ? '1000' : (cr.ab==='armor'?'ЩИТ':cr.ab==='laser'?'ЛУЧ':'МИНЫ'), cr.x, cr.y+28);
+    }
+
+    // мины
+    for (const m of (s.mn || [])) {
+      const pulse = 1 + 0.18*Math.sin(now*6 + m.i);
+      ctx.fillStyle = '#1b1f2b';
+      ctx.strokeStyle = '#ffb458';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(m.x, m.y, 10*pulse, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#ff4d4d';
+      ctx.beginPath(); ctx.arc(m.x, m.y, 3.2, 0, Math.PI*2); ctx.fill();
+      // шипы
+      ctx.strokeStyle='#ffb458'; ctx.lineWidth=1.4;
+      for(let k=0;k<4;k++){ const ang=k*Math.PI/2+ now*2; ctx.beginPath(); ctx.moveTo(m.x+Math.cos(ang)*10, m.y+Math.sin(ang)*10); ctx.lineTo(m.x+Math.cos(ang)*14, m.y+Math.sin(ang)*14); ctx.stroke(); }
+    }
+
+    // лазеры (две стороны)
+    for (const ls of (s.ls || [])) {
+      const owner = (s.ps||[]).find(p=>p.i===ls.o);
+      if(!owner) continue;
+      const len = Math.hypot(W,H)+120;
+      const x2 = owner.x + Math.cos(owner.a)*len;
+      const y2 = owner.y + Math.sin(owner.a)*len;
+      const x1 = owner.x + Math.cos(owner.a+Math.PI)*len;
+      const y1 = owner.y + Math.sin(owner.a+Math.PI)*len;
+      ctx.strokeStyle = 'rgba(255,80,110,.95)';
+      ctx.shadowColor='#ff4d6d'; ctx.shadowBlur=14; ctx.lineWidth = 7;
+      ctx.beginPath(); ctx.moveTo(owner.x, owner.y); ctx.lineTo(x2,y2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(owner.x, owner.y); ctx.lineTo(x1,y1); ctx.stroke();
+      ctx.shadowBlur=0;
+      ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(owner.x, owner.y); ctx.lineTo(x2,y2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(owner.x, owner.y); ctx.lineTo(x1,y1); ctx.stroke();
+    }
+
+    // боссы
+    for (const b of (s.bo || [])) {
+      const def = BALANCE.bosses.types[b.k];
+      const r = def ? def.radius : 50;
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.a);
+      const col = b.k==='dreadnought' ? '#ff9d4d' : b.k==='phantom' ? '#9d7dff' : '#4dffc8';
+      const pulse = 1 + 0.06*Math.sin(now*3 + b.i);
+      ctx.scale(pulse, pulse);
+      // корпус
+      ctx.fillStyle = '#0f131c';
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      if(b.k==='leviathan'){
+        // круглый
+        ctx.arc(0,0,r,0,Math.PI*2);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle=col; ctx.beginPath(); ctx.arc(0,0,8,0,Math.PI*2); ctx.fill();
+        for(let k=0;k<6;k++){ const ang=k*Math.PI/3; ctx.fillStyle='#1a2333'; ctx.beginPath(); ctx.arc(Math.cos(ang)*(r-14), Math.sin(ang)*(r-14), 7,0,Math.PI*2); ctx.fill(); ctx.strokeStyle=col; ctx.lineWidth=1.2; ctx.stroke(); }
+      } else if(b.k==='phantom'){
+        ctx.moveTo(26,0); ctx.lineTo(-18,-22); ctx.lineTo(-10,0); ctx.lineTo(-18,22); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillStyle=col; ctx.beginPath(); ctx.arc(4,0,6,0,Math.PI*2); ctx.fill();
+      } else {
+        // dreadnought прямоугольный
+        ctx.fillRect(-r*0.9, -r*0.65, r*1.8, r*1.3);
+        ctx.strokeRect(-r*0.9, -r*0.65, r*1.8, r*1.3);
+        ctx.fillStyle='#1e2a3a'; ctx.fillRect(-r*0.6, -r*0.3, r*1.2, r*0.6);
+        ctx.fillStyle=col; ctx.fillRect(r*0.35, -6, 18,12);
+      }
+      ctx.restore();
+      // HP бар
+      const bw = 74;
+      ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(b.x-bw/2, b.y - r -18, bw, 7);
+      ctx.fillStyle = b.h/b.hm <0.3 ? '#ff4d4d' : col;
+      ctx.fillRect(b.x-bw/2, b.y - r -18, bw*Math.max(0,b.h/b.hm),7);
+      ctx.fillStyle='#fff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+      ctx.fillText((def?def.name:b.k).toUpperCase(), b.x, b.y - r -24);
+    }
+
     // корабли
     for (const p of s.ps) {
       if (!p.al) continue;
@@ -380,16 +455,37 @@ export function createRenderer(canvas) {
       ctx.arc(2, 0, 3.4, 0, Math.PI * 2);
       ctx.fill();
 
-      if (p.iv > 0 || p.sh > 0) { // щит неуязвимости
-        const shieldActive = p.iv > 0 || p.sh > 0;
-        ctx.globalAlpha = shieldActive ? (0.5 + 0.3 * Math.sin(now * 10)) : 0.35;
-        ctx.strokeStyle = p.sh > 0 && p.iv <= 0 ? '#5ad0ff' : '#bff1ff';
+      if (p.iv > 0) { // щит неуязвимости
+        ctx.globalAlpha = 0.5 + 0.3 * Math.sin(now * 10);
+        ctx.strokeStyle = '#bff1ff';
         ctx.lineWidth = 1.6;
         ctx.beginPath();
         ctx.arc(0, 0, 24, 0, Math.PI * 2);
         ctx.stroke();
       }
+      // доп щит брони (заряды)
+      const ab = p.ab;
+      if (ab && ab.ar && ab.ac>0) {
+        ctx.globalAlpha = 0.35 + 0.2*Math.sin(now*6);
+        ctx.strokeStyle = '#7dd8ff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6,4]);
+        ctx.beginPath(); ctx.arc(0,0, 28 + ab.ac*2, 0,Math.PI*2); ctx.stroke();
+        ctx.setLineDash([]);
+      }
       ctx.restore();
+      // индикатор зарядов брони над кораблем
+      if (p.ab && p.ab.ar) {
+        const ac = p.ab.ac;
+        const cd = p.ab.arCd;
+        if (ac>0) {
+          ctx.fillStyle='#7dd8ff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+          ctx.fillText('Щит x'+ac, p.x, p.y-26);
+        } else if (cd>0) {
+          ctx.fillStyle='rgba(125,216,255,.7)'; ctx.font='10px sans-serif'; ctx.textAlign='center';
+          ctx.fillText(Math.ceil(cd/1000)+'с', p.x, p.y-26);
+        }
+      }
     }
 
     // частицы поверх
@@ -418,7 +514,7 @@ export function createRenderer(canvas) {
     right: document.getElementById('hudRight'),
     timer: document.getElementById('timerText'),
     timerSub: document.getElementById('timerSub'),
-    boost: document.getElementById('boostIndicator'),
+    abilityBar: document.getElementById('abilityBar'),
     upgBtns: [...document.querySelectorAll('.upg-btn')],
   };
   const hudCache = {};
@@ -522,18 +618,23 @@ export function createRenderer(canvas) {
       const sub = opts.subText || (opts.solo ? 'время полёта' : 'до конца матча');
       if (hudEls.timerSub.textContent !== sub) hudEls.timerSub.textContent = sub;
 
-      if (hudEls.boost) {
-        const me2 = ps.find((p) => p.i === selfId);
-        if (me2 && me2.rf > 0) {
-          hudEls.boost.textContent = `СТРЕЛЬБА ×2 ${Math.ceil(me2.rf / 1000)}с`;
-          hudEls.boost.style.color = '#ff6ba8';
-          hudEls.boost.classList.remove('hidden');
-        } else if (me2 && me2.sh > 0) {
-          hudEls.boost.textContent = `ЩИТ ${Math.ceil(me2.sh / 1000)}с`;
-          hudEls.boost.style.color = '#5ad0ff';
-          hudEls.boost.classList.remove('hidden');
-        } else {
-          hudEls.boost.classList.add('hidden');
+      // способности
+      if (hudEls.abilityBar) {
+        if (!me || !me.ab) hudEls.abilityBar.innerHTML='';
+        else {
+          const ab = me.ab;
+          const fmt = (ms)=> ms<=0 ? 'ГОТОВ' : Math.ceil(ms/1000)+'с';
+          const parts=[];
+          if (ab.ar) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.ac>0?'#0e3a4a':'#222'};color:#7dd8ff;border:1px solid #2a5a6e">🛡 Броня x${ab.ac} ${ab.ac===0? '('+fmt(ab.arCd)+')':''}</span>`);
+          if (ab.ls) {
+            const active = ab.la>0;
+            parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${active?'#4a0e1a': ab.lc<=0?'#3a1a2a':'#222'};color:#ff7a9e;border:1px solid #6e2a3a">Q ЛАЗЕР ${active? Math.ceil(ab.la/1000)+'с' : fmt(ab.lc)}</span>`);
+          }
+          if (ab.mn) {
+            parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.mc<=0?'#2a2a0e':'#222'};color:#ffd27a;border:1px solid #6e5a2a">E МИНЫ ${ab.ml}/5 ${ab.mc>0? '('+fmt(ab.mc)+')':''}</span>`);
+          }
+          if(!ab.ar && !ab.ls && !ab.mn) parts.push(`<span style="opacity:.5;font-size:12px">Боссы 10k/20k/30k → кристаллы способностей</span>`);
+          hudEls.abilityBar.innerHTML = parts.join('');
         }
       }
     },

@@ -14,7 +14,7 @@ export function createInput(canvas, getView) {
 
   function onKeyDown(e) {
     if (!active) return;
-    if (MOVE_KEYS[e.code] || e.code === 'Space') e.preventDefault();
+    if (MOVE_KEYS[e.code] || e.code === 'Space' || e.code==='KeyQ' || e.code==='KeyE') e.preventDefault();
     if (!keys.has(e.code)) {
       if (e.code === 'Digit1') buyQueue.push('damage');
       if (e.code === 'Digit2') buyQueue.push('firerate');
@@ -92,6 +92,20 @@ export function createInput(canvas, getView) {
     },
     wantsMissile() {
       return mouse.rmb || keys.has('KeyF');
+    },
+    wantsLaser() {
+      return keys.has('KeyQ');
+    },
+    wantsMine() {
+      return keys.has('KeyE');
+    },
+    consumeLaser() {
+      if (keys.has('KeyQ')) { keys.delete('KeyQ'); return true; }
+      return false;
+    },
+    consumeMine() {
+      if (keys.has('KeyE')) { keys.delete('KeyE'); return true; }
+      return false;
     },
     consumeBuyKey() {
       return buyQueue.shift() ?? null;
