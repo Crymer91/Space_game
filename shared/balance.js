@@ -177,7 +177,7 @@ export const BALANCE = {
   },
 
   abilities: {
-    armor:  { name: 'Броня', charges: 2, regenMs: 15000 },
+    armor:  { name: 'Броня', charges: 1, regenMs: 15000 },
     laser:  { name: 'Лазер', durationMs: 5000, cooldownMs: 90000, dps: 18, width: 14, tickMs: 90 },
     mines:  { name: 'Мины', max: 5, cooldownMs: 180000, blastRadius: 115, blastDamage: 7, chainRadius: 210, maxChain: 6, armMs: 400 },
   },
