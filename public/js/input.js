@@ -12,20 +12,46 @@ export function createInput(canvas, getView) {
     KeyD: [1, 0], ArrowRight: [1, 0],
   };
 
+  // поддержка русской раскладки: й→q, ц→w, у→e, а→f и т.д.
+  function normalizeCode(e) {
+    if (e.code && e.code !== 'Unidentified' && e.code.startsWith('Key')) return e.code;
+    if (e.code === 'Space' || e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3' || e.code === 'Digit4' || e.code?.startsWith('Arrow')) return e.code;
+    const k = (e.key || '').toLowerCase();
+    const ruMap = {
+      'й':'KeyQ','ц':'KeyW','у':'KeyE','к':'KeyR','е':'KeyT','н':'KeyY','г':'KeyU','ш':'KeyI','щ':'KeyO','з':'KeyP',
+      'ф':'KeyA','ы':'KeyS','в':'KeyD','а':'KeyF','п':'KeyG','р':'KeyH','о':'KeyJ','л':'KeyK','д':'KeyL',
+      'я':'KeyZ','ч':'KeyX','с':'KeyC','м':'KeyV','и':'KeyB','т':'KeyN','ь':'KeyM',
+      'q':'KeyQ','w':'KeyW','e':'KeyE','r':'KeyR','t':'KeyT','y':'KeyY','u':'KeyU','i':'KeyI','o':'KeyO','p':'KeyP',
+      'a':'KeyA','s':'KeyS','d':'KeyD','f':'KeyF','g':'KeyG','h':'KeyH','j':'KeyJ','k':'KeyK','l':'KeyL',
+      'z':'KeyZ','x':'KeyX','c':'KeyC','v':'KeyV','b':'KeyB','n':'KeyN','m':'KeyM',
+    };
+    if (ruMap[k]) return ruMap[k];
+    if (e.code) return e.code;
+    return k;
+  }
+
   function onKeyDown(e) {
     if (!active) return;
-    if (MOVE_KEYS[e.code] || e.code === 'Space' || e.code==='KeyQ' || e.code==='KeyE') e.preventDefault();
-    if (!keys.has(e.code)) {
-      if (e.code === 'Digit1') buyQueue.push('damage');
-      if (e.code === 'Digit2') buyQueue.push('firerate');
-      if (e.code === 'Digit3') buyQueue.push('life');
-      if (e.code === 'Digit4') buyQueue.push('missiles');
+    const code = normalizeCode(e);
+    if (MOVE_KEYS[code] || code === 'Space' || code==='KeyQ' || code==='KeyE' || code==='KeyF') e.preventDefault();
+    if (!keys.has(code)) {
+      if (code === 'Digit1' || (e.key||'').toLowerCase()==='1') buyQueue.push('damage');
+      if (code === 'Digit2' || (e.key||'').toLowerCase()==='2') buyQueue.push('firerate');
+      if (code === 'Digit3' || (e.key||'').toLowerCase()==='3') buyQueue.push('life');
+      if (code === 'Digit4' || (e.key||'').toLowerCase()==='4') buyQueue.push('missiles');
     }
-    keys.add(e.code);
+    keys.add(code);
   }
 
   function onKeyUp(e) {
-    keys.delete(e.code);
+    keys.delete(normalizeCode(e));
+    // на случай если keyup пришёл с другим code/key (переключение раскладки во время удержания)
+    // чистим оба варианта
+    if (e.code) keys.delete(e.code);
+    if (e.key) {
+      const alt = normalizeCode({code:'', key:e.key});
+      keys.delete(alt);
+    }
   }
 
   function onMouseMove(e) {
