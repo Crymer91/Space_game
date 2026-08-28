@@ -53,19 +53,7 @@ export const BALANCE = {
     },
   },
 
-  // Уровни угрозы: разблокируются по максимальному счёту игрока в матче
-  comets: {
-    unlockScore: 3000,
-    intervalMinMs: 1700,
-    intervalMaxMs: 2900,
-  },
-
   enemies: {
-    unlockScore: 6000,
-    firstSpawnDelayMs: 1500,
-    intervalMinMs: 6500,
-    intervalMaxMs: 11000,
-    maxAlive: 2,
     hp: 4,
     radius: 16,
     score: 150,
@@ -142,7 +130,6 @@ export const BALANCE = {
   },
 
   bosses: {
-    thresholds: [10000, 20000, 30000],
     types: {
       dreadnought: {
         key: 'dreadnought', name: 'Дредноут',
@@ -189,12 +176,36 @@ export const BALANCE = {
 
   matchDurationMs: 180000,
 
+  // --- Единая конфигурация спавна противников волнами ---
+  // Враги спавнятся волнами, по порядку из `list`. После каждой волны — пауза
+  // (cooldownMs), затем следующая волна. Когда волны кончились, снова с первой
+  // (если loop === true) либо игра переходит в «затишье».
+  //
+  // Каждая волна:
+  //   name        — текстовое название (показывается игрокам)
+  //   enemies     — сколько каких простых врагов заспавнить внутри волны.
+  //                 Ключи: small / medium / large / comet / hunter.
+  //   bosses      — список боссов (по ключам из B.bosses.types).
+  //   intervalMs  — интервал между спавном врагов внутри волны (мс).
+  //   cooldownMs  — пауза после волны перед следующей (мс).
+  //                 Пустая волна (без enemies и bosses) = «затишье».
   waves: {
-    startIntervalMs: 1400,
-    minIntervalMs: 480,
-    rampMs: 90000,             // за это время интервал падает до минимума
-    // веса типов в начале и в конце матча (линейная интерполяция)
-    weightsStart: { small: 0.6, medium: 0.32, large: 0.08 },
-    weightsEnd:   { small: 0.34, medium: 0.42, large: 0.24 },
+    loop: true,
+    intervalMs: 900,      // интервал по умолчанию внутри волны
+    cooldownMs: 4000,     // пауза по умолчанию после волны
+    list: [
+      {name: 'Пролог',                enemies:{small:3,medium:2,large:1},                                                                     cooldownMs:20000},
+      { name: 'Астероидный дождь',    enemies: { small: 3, medium: 3, large: 1 },                 intervalMs: 700 },
+      { name: 'Затишье',              enemies: {},                                                                    cooldownMs: 9000 },
+      { name: 'Охотники',             enemies: { hunter: 2 },                                     intervalMs: 1200 },
+      { name: 'Комета-шторм',         enemies: { comet: 8, small: 2 },                            intervalMs: 600 },
+      { name: 'Авангард босса',       enemies: { small: 5, medium: 4 }, bosses: ['dreadnought'],  intervalMs: 650,     cooldownMs: 6000 },
+      { name: 'Фланговая атака',      enemies: { hunter: 3, medium: 5 },                          intervalMs: 800 },
+      { name: 'Крепость',             enemies: { small: 4, medium: 6, large: 2 }, bosses: ['phantom'], intervalMs: 700, cooldownMs: 7000 },
+      { name: 'Огненный лёд',         enemies: { comet: 12, hunter: 2 },                          intervalMs: 500 },
+      { name: 'Левиафан',             enemies: { medium: 6, small: 6 }, bosses: ['leviathan'], intervalMs: 650, cooldownMs: 8000 },
+      { name: 'Итоговый штурм',       enemies: { comet: 6, hunter: 4, medium: 8, large: 3 }, bosses: ['dreadnought', 'phantom', 'leviathan'], intervalMs: 480 },
+    ],
   },
 };
+ 

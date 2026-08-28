@@ -493,8 +493,29 @@ export function createRenderer(canvas) {
         ctx.arc(0, 0, 24, 0, Math.PI * 2);
         ctx.stroke();
       }
-      // доп щит брони (заряды)
+      // временный щит (пауэр-ап)
       const ab = p.ab;
+      if (ab && ab.sh > 0) {
+        const blink = ab.sh < 3000 ? (Math.floor(now * 12) % 2 === 0 ? 0.15 : 0.5) : 0.5;
+        ctx.globalAlpha = blink;
+        ctx.strokeStyle = '#5ad0ff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 6]);
+        ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+      // ускорение стрельбы (пауэр-ап)
+      if (ab && ab.rf > 0) {
+        const blink = ab.rf < 3000 ? (Math.floor(now * 12) % 2 === 0 ? 0.15 : 0.5) : 0.5;
+        ctx.globalAlpha = blink;
+        ctx.strokeStyle = '#ff6ba8';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 30, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      // доп щит брони (заряды)
       if (ab && ab.ar && ab.ac>0) {
         ctx.globalAlpha = 0.35 + 0.2*Math.sin(now*6);
         ctx.strokeStyle = '#7dd8ff';
@@ -544,6 +565,7 @@ export function createRenderer(canvas) {
     right: document.getElementById('hudRight'),
     timer: document.getElementById('timerText'),
     timerSub: document.getElementById('timerSub'),
+    waveInfo: document.getElementById('waveInfo'),
     abilityBar: document.getElementById('abilityBar'),
     upgBtns: [...document.querySelectorAll('.upg-btn')],
   };
@@ -648,6 +670,20 @@ export function createRenderer(canvas) {
       const sub = opts.subText || (opts.solo ? 'время полёта' : 'до конца матча');
       if (hudEls.timerSub.textContent !== sub) hudEls.timerSub.textContent = sub;
 
+      // текущая волна
+      if (hudEls.waveInfo) {
+        const wv = s.wv;
+        let html = '';
+        if (wv && wv.n) {
+          const counts = wv.tot > 0 ? ` · осталось: ${wv.tot}` : '';
+          const cooldown = wv.ph === 'cooldown' ? ` · след. волна через ${Math.ceil(wv.nxt / 1000)}с` : '';
+          html = `<div style="margin-top:4px;font-size:13px;font-weight:bold;color:#ffd27a">
+            Волна ${(wv.i + 1)}: ${wv.n}${counts}${cooldown}
+          </div>`;
+        }
+        if (hudEls.waveInfo.innerHTML !== html) hudEls.waveInfo.innerHTML = html;
+      }
+
       // способности
       if (hudEls.abilityBar) {
         if (!me || !me.ab) hudEls.abilityBar.innerHTML='';
@@ -655,6 +691,8 @@ export function createRenderer(canvas) {
           const ab = me.ab;
           const fmt = (ms)=> ms<=0 ? 'ГОТОВ' : Math.ceil(ms/1000)+'с';
           const parts=[];
+          if (ab.sh > 0) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:#0e3a4a;color:#5ad0ff;border:1px solid #2a5a6e">🛡 Щит ${Math.ceil(ab.sh/1000)}с</span>`);
+          if (ab.rf > 0) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:#4a0e1a;color:#ff6ba8;border:1px solid #6e2a3a">⚡ Ускорение ${Math.ceil(ab.rf/1000)}с</span>`);
           if (ab.ar) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.ac>0?'#0e3a4a':'#222'};color:#7dd8ff;border:1px solid #2a5a6e">🛡 Броня x${ab.ac} ${ab.ac===0? '('+fmt(ab.arCd)+')':''}</span>`);
           if (ab.ls) {
             const active = ab.la>0;
