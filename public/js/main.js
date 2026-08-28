@@ -415,10 +415,10 @@ els.joinCodeInput.addEventListener('keydown', (e) => {
 });
 els.nickInput.addEventListener('change', saveNick);
 
-els.waitCancelBtn.addEventListener('click', async () => {
-  await api.cancelFind();
-  await api.leaveRoom();
+els.waitCancelBtn.addEventListener('click', () => {
   hideWait();
+  api.cancelFind();
+  api.leaveRoom();
 });
 
 els.toMenuBtn.addEventListener('click', () => showMenu());
