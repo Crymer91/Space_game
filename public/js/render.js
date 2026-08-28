@@ -62,6 +62,19 @@ export function createRenderer(canvas) {
       sp: 0.4 + rng() * 1.6,
     });
   }
+  // туманность (фиолетовые облака) — показывается после 2 босса
+  const nebulaBlobs = [];
+  const rng2 = hashRand(9999);
+  for (let i=0;i<14;i++){
+    nebulaBlobs.push({
+      x: rng2()*W,
+      y: rng2()*H,
+      rx: 220 + rng2()*380,
+      ry: 140 + rng2()*220,
+      alpha: 0.08 + rng2()*0.13,
+      hue: 265 + rng2()*35, // фиолетовый
+    });
+  }
 
   // форма астероидов по seed (кэш)
   const shapes = new Map();
@@ -125,12 +138,22 @@ export function createRenderer(canvas) {
     requestAnimationFrame(frame);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#05070c';
+    // вне арены — более тёмный, но с фиолетовым отливом если туманность активна
+    const neb = current && current.nb;
+    ctx.fillStyle = neb ? '#0b0614' : '#05070c';
     ctx.fillRect(0, 0, cssW, cssH);
     if (!current) return;
 
-    // фон вне арены
-    ctx.fillStyle = '#080a12';
+    // фон арены
+    if (neb) {
+      const grad = ctx.createLinearGradient(view.ox, view.oy, view.ox, view.oy + H*view.scale);
+      grad.addColorStop(0, '#1a1030');
+      grad.addColorStop(0.5, '#20144a');
+      grad.addColorStop(1, '#120e2a');
+      ctx.fillStyle = grad;
+    } else {
+      ctx.fillStyle = '#080a12';
+    }
     ctx.fillRect(view.ox, view.oy, W * view.scale, H * view.scale);
 
     shake *= Math.exp(-7 * dt);
@@ -151,12 +174,28 @@ export function createRenderer(canvas) {
     for (const st of stars) {
       const tw = 0.35 + 0.65 * Math.abs(Math.sin(now * st.sp + st.ph));
       ctx.globalAlpha = tw;
-      ctx.fillStyle = '#cfe0ff';
+      ctx.fillStyle = s.nb ? '#e0c8ff' : '#cfe0ff';
       ctx.beginPath();
       ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+    // туманность — большие полупрозрачные фиолетовые пятна
+    if (s.nb) {
+      for (const bl of nebulaBlobs) {
+        const pulse = 0.9 + 0.22*Math.sin(now*0.35 + bl.x*0.002);
+        ctx.globalAlpha = bl.alpha * pulse;
+        const grad = ctx.createRadialGradient(bl.x, bl.y, 0, bl.x, bl.y, Math.max(bl.rx, bl.ry));
+        grad.addColorStop(0, `hsla(${bl.hue},85%,62%,0.55)`);
+        grad.addColorStop(0.45, `hsla(${bl.hue+12},78%,58%,0.22)`);
+        grad.addColorStop(1, `hsla(${bl.hue+18},70%,48%,0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.ellipse(bl.x, bl.y, bl.rx, bl.ry, 0, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
 
     // монеты
     for (const c of s.cs) {
@@ -247,6 +286,31 @@ export function createRenderer(canvas) {
       ctx.fill();
       ctx.stroke();
       ctx.restore();
+      // спутник астероида (после 2 босса)
+      if (a.sa !== undefined) {
+        const sx = a.x + Math.cos(a.sa) * a.sdst;
+        const sy = a.y + Math.sin(a.sa) * a.sdst;
+        // орбита
+        ctx.strokeStyle = s.nb ? 'rgba(180,120,255,.18)' : 'rgba(120,140,180,.15)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(a.x, a.y, a.sdst, 0, Math.PI*2); ctx.stroke();
+        // спутник
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(a.srot || 0);
+        const satPts = asteroidShape({ i: a.i*9973 + 1, sd: a.sd2 });
+        ctx.fillStyle = s.nb ? '#c9b6ff' : '#8f97ab';
+        ctx.strokeStyle = s.nb ? '#6a4da6' : '#39415a';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        for (let k=0;k<satPts.length;k++) {
+          const px = satPts[k][0] * (a.sr || 7);
+          const py = satPts[k][1] * (a.sr || 7);
+          if(k===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+        }
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // пули (вражеские — красные)

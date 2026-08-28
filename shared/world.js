@@ -67,6 +67,7 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     cometTimerMs: 1000,
     enemyTimerMs: B.enemies.firstSpawnDelayMs,
     bossSpawned: [false, false, false],
+    nebulaActive: false,
   };
   let i = 0;
   for (const id of playerIds) {
@@ -234,7 +235,7 @@ function spawnAsteroid(world, type, atX, atY, speedScale = 1) {
   const ty = rand(world.rng, h * 0.2, h * 0.8);
   const ang = Math.atan2(ty - y, tx - x) + rand(world.rng, -0.5, 0.5);
   const sp = rand(world.rng, def.speedMin, def.speedMax) * speedScale;
-  world.asteroids.push({
+  const asteroid = {
     id: world.nextAsteroidId++,
     type,
     x,
@@ -247,7 +248,21 @@ function spawnAsteroid(world, type, atX, atY, speedScale = 1) {
     rot: rand(world.rng, 0, Math.PI * 2),
     rotSpeed: rand(world.rng, -1.4, 1.4),
     shapeSeed: randInt(world.rng, 1, 1e9),
-  });
+  };
+  // спутник для туманности после 2 босса
+  if (world.nebulaActive && type !== 'comet' && world.rng() < B.nebula.satelliteChance) {
+    const N = B.nebula;
+    asteroid.sat = {
+      ang: rand(world.rng, 0, Math.PI*2),
+      dist: rand(world.rng, N.satelliteDistMin, N.satelliteDistMax) + asteroid.r*0.35,
+      r: Math.max(5, asteroid.r * N.satelliteSizeFactor * rand(world.rng,0.8,1.15)),
+      rot: rand(world.rng,0,Math.PI*2),
+      rotSpeed: rand(world.rng,-2,2),
+      speed: rand(world.rng, N.orbitSpeedMin, N.orbitSpeedMax) * (world.rng()<0.5?1:-1),
+      seed: randInt(world.rng,1,1e9),
+    };
+  }
+  world.asteroids.push(asteroid);
 }
 
 function spawnCoinBurst(world, x, y, count) {
@@ -967,6 +982,10 @@ export function stepWorld(world, dtSec, inputs) {
     a.x += a.vx * dt;
     a.y += a.vy * dt;
     a.rot += a.rotSpeed * dt;
+    if (a.sat) {
+      a.sat.ang += a.sat.speed * dt;
+      a.sat.rot += a.sat.rotSpeed * dt;
+    }
     if (a.type === 'comet') {
       // комета летит насквозь и удаляется, вылетев за поле
       const m = a.r + 60;
@@ -1208,6 +1227,26 @@ export function stepWorld(world, dtSec, inputs) {
       addFx(world, 'warning', w / 2, 90 + i * 20, 3 + i);
     }
   }
+  // --- туманность после второго босса (20к) — фиолетовый фон + спутники ---
+  if (!world.nebulaActive && world.bossSpawned[1]) {
+    world.nebulaActive = true;
+    addFx(world, 'nebula', w/2, h/2, 3);
+    // дооснастить существующие астероиды спутниками
+    for (const a of world.asteroids) {
+      if (!a.sat && a.type !== 'comet' && world.rng() < B.nebula.satelliteChance) {
+        const N = B.nebula;
+        a.sat = {
+          ang: rand(world.rng,0,Math.PI*2),
+          dist: rand(world.rng,N.satelliteDistMin,N.satelliteDistMax)+a.r*0.35,
+          r: Math.max(5, a.r*N.satelliteSizeFactor*rand(world.rng,0.8,1.15)),
+          rot: rand(world.rng,0,Math.PI*2),
+          rotSpeed: rand(world.rng,-2,2),
+          speed: rand(world.rng,N.orbitSpeedMin,N.orbitSpeedMax)*(world.rng()<0.5?1:-1),
+          seed: randInt(world.rng,1,1e9),
+        };
+      }
+    }
+  }
 
   // --- конец матча ---
   const everyoneOut = world.players.every((p) => p.out);
@@ -1222,6 +1261,7 @@ export function stepWorld(world, dtSec, inputs) {
 // Компактный снимок состояния для сети/рендера
 export function snapshotOf(world) {
   return {
+    nb: world.nebulaActive ? 1 : 0,
     st: world.status,
     t: Math.round(world.t),
     tl: world.timeLeftMs == null ? null : Math.round(world.timeLeftMs),
@@ -1265,6 +1305,13 @@ export function snapshotOf(world) {
         ro: Math.round(a.rot * 100) / 100,
         sd: a.shapeSeed,
       };
+      if (a.sat) {
+        o.sa = Math.round(a.sat.ang * 100)/100;
+        o.sd2 = a.sat.seed;
+        o.sr = Math.round(a.sat.r*10)/10;
+        o.sdst = Math.round(a.sat.dist*10)/10;
+        o.srot = Math.round(a.sat.rot*100)/100;
+      }
       if (a.type === 'comet') {
         o.vx = Math.round(a.vx);
         o.vy = Math.round(a.vy);

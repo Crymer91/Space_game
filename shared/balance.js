@@ -189,6 +189,15 @@ export const BALANCE = {
 
   matchDurationMs: 180000,
 
+  nebula: {
+    satelliteChance: 0.35,       // шанс что астероид получит спутник после 2 босса
+    satelliteDistMin: 32,
+    satelliteDistMax: 52,
+    satelliteSizeFactor: 0.42,   // размер спутника от родителя
+    orbitSpeedMin: 0.9,          // рад/с
+    orbitSpeedMax: 1.9,
+  },
+
   waves: {
     startIntervalMs: 1400,
     minIntervalMs: 480,
