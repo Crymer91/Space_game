@@ -17,6 +17,20 @@ No build step, no transpiler, no native modules. Pure JS everywhere.
 
 No lint, typecheck, or formatter is configured. Run `npm test` to verify changes.
 
+## Changelog (mandatory)
+
+After **any** change that adds, fixes, or tunes a feature (gameplay, balance, UI,
+rendering, server, tests, config, etc.), record it in **`CHANGELOG.md`**.
+
+- Add a concise bullet under the current or new dated `## YYYY-MM-DD` section
+  (use today's date; create the heading if it doesn't exist).
+- The log must cover **all** features and improvements regardless of author —
+  including work by other people or other sessions.
+- Bullets should describe the user-visible or behavioral effect, in Russian,
+  one line each.
+- Run `npm test` for logic/server changes before finalizing; update the
+  changelog for the verified change as the last step.
+
 ## Architecture
 
 ```
