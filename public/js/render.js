@@ -12,7 +12,9 @@ const FX_COLORS = {
   shoot: ['#fff2b0'],
   spawn: ['#5ad0ff', '#bff1ff'],
   upgrade: ['#7dff9e', '#d2ffde'],
-  powerup: ['#ff6ba8', '#5ad0ff', '#ffffff'],
+  shield: ['#7dd8ff', '#bff1ff'],
+  laser: ['#ff5a66', '#ffb0b8'],
+  mine: ['#ffb458', '#ffd08a'],
 };
 
 function hashRand(seed) {
@@ -58,6 +60,19 @@ export function createRenderer(canvas) {
       r: 0.4 + rng() * 1.4,
       ph: rng() * Math.PI * 2,
       sp: 0.4 + rng() * 1.6,
+    });
+  }
+  // туманность (фиолетовые облака) — показывается после 2 босса
+  const nebulaBlobs = [];
+  const rng2 = hashRand(9999);
+  for (let i=0;i<14;i++){
+    nebulaBlobs.push({
+      x: rng2()*W,
+      y: rng2()*H,
+      rx: 220 + rng2()*380,
+      ry: 140 + rng2()*220,
+      alpha: 0.08 + rng2()*0.13,
+      hue: 265 + rng2()*35, // фиолетовый
     });
   }
 
@@ -123,12 +138,22 @@ export function createRenderer(canvas) {
     requestAnimationFrame(frame);
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#05070c';
+    // вне арены — более тёмный, но с фиолетовым отливом если туманность активна
+    const neb = current && current.nb;
+    ctx.fillStyle = neb ? '#0b0614' : '#05070c';
     ctx.fillRect(0, 0, cssW, cssH);
     if (!current) return;
 
-    // фон вне арены
-    ctx.fillStyle = '#080a12';
+    // фон арены
+    if (neb) {
+      const grad = ctx.createLinearGradient(view.ox, view.oy, view.ox, view.oy + H*view.scale);
+      grad.addColorStop(0, '#1a1030');
+      grad.addColorStop(0.5, '#20144a');
+      grad.addColorStop(1, '#120e2a');
+      ctx.fillStyle = grad;
+    } else {
+      ctx.fillStyle = '#080a12';
+    }
     ctx.fillRect(view.ox, view.oy, W * view.scale, H * view.scale);
 
     shake *= Math.exp(-7 * dt);
@@ -149,12 +174,28 @@ export function createRenderer(canvas) {
     for (const st of stars) {
       const tw = 0.35 + 0.65 * Math.abs(Math.sin(now * st.sp + st.ph));
       ctx.globalAlpha = tw;
-      ctx.fillStyle = '#cfe0ff';
+      ctx.fillStyle = s.nb ? '#e0c8ff' : '#cfe0ff';
       ctx.beginPath();
       ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+    // туманность — большие полупрозрачные фиолетовые пятна
+    if (s.nb) {
+      for (const bl of nebulaBlobs) {
+        const pulse = 0.9 + 0.22*Math.sin(now*0.35 + bl.x*0.002);
+        ctx.globalAlpha = bl.alpha * pulse;
+        const grad = ctx.createRadialGradient(bl.x, bl.y, 0, bl.x, bl.y, Math.max(bl.rx, bl.ry));
+        grad.addColorStop(0, `hsla(${bl.hue},85%,62%,0.55)`);
+        grad.addColorStop(0.45, `hsla(${bl.hue+12},78%,58%,0.22)`);
+        grad.addColorStop(1, `hsla(${bl.hue+18},70%,48%,0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.ellipse(bl.x, bl.y, bl.rx, bl.ry, 0, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
 
     // монеты
     for (const c of s.cs) {
@@ -172,9 +213,9 @@ export function createRenderer(canvas) {
       ctx.fill();
     }
 
-    // powerups
+    // powerups (щит/ускорение)
     const PU_COLORS = { rapidFire: '#ff6ba8', shield: '#5ad0ff' };
-    const PU_GLOW = { rapidFire: 'rgba(255,107,168,.4)', shield: 'rgba(90,208,255,.4)' };
+    const PU_GLOW = { rapidFire: 'rgba(255,107,168,.6)', shield: 'rgba(90,208,255,.6)' };
     for (const u of (s.pu || [])) {
       const color = PU_COLORS[u.tp] || '#ffffff';
       const glow = PU_GLOW[u.tp] || 'rgba(255,255,255,.3)';
@@ -194,9 +235,11 @@ export function createRenderer(canvas) {
       ctx.closePath();
       ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.4;
-      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.9)';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(u.tp === 'rapidFire' ? '⚡' : '🛡', 0, 1);
       ctx.restore();
     }
 
@@ -243,6 +286,31 @@ export function createRenderer(canvas) {
       ctx.fill();
       ctx.stroke();
       ctx.restore();
+      // спутник астероида (после 2 босса)
+      if (a.sa !== undefined) {
+        const sx = a.x + Math.cos(a.sa) * a.sdst;
+        const sy = a.y + Math.sin(a.sa) * a.sdst;
+        // орбита
+        ctx.strokeStyle = s.nb ? 'rgba(180,120,255,.18)' : 'rgba(120,140,180,.15)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(a.x, a.y, a.sdst, 0, Math.PI*2); ctx.stroke();
+        // спутник
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(a.srot || 0);
+        const satPts = asteroidShape({ i: a.i*9973 + 1, sd: a.sd2 });
+        ctx.fillStyle = s.nb ? '#c9b6ff' : '#8f97ab';
+        ctx.strokeStyle = s.nb ? '#6a4da6' : '#39415a';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        for (let k=0;k<satPts.length;k++) {
+          const px = satPts[k][0] * (a.sr || 7);
+          const py = satPts[k][1] * (a.sr || 7);
+          if(k===0) ctx.moveTo(px,py); else ctx.lineTo(px,py);
+        }
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // пули (вражеские — красные)
@@ -342,6 +410,107 @@ export function createRenderer(canvas) {
       }
     }
 
+    // кристаллы (1 = 1000 монет и способности)
+    for (const cr of (s.cr || [])) {
+      const pulse = 1 + 0.14*Math.sin(now*4 + cr.i);
+      const isCoin = cr.k === 'coins';
+      const col = isCoin ? '#ffd75e' : (cr.ab==='armor' ? '#7dd8ff' : cr.ab==='laser' ? '#ff6b9e' : '#7dff9e');
+      const stroke = isCoin ? '#8a6a1d' : '#1a1a2e';
+      ctx.save();
+      ctx.translate(cr.x, cr.y);
+      ctx.rotate(now*1.2);
+      ctx.scale(pulse, pulse);
+      ctx.fillStyle = col;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      // ромб
+      ctx.moveTo(0, -14); ctx.lineTo(10, 0); ctx.lineTo(0, 14); ctx.lineTo(-10, 0); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(4, 0); ctx.lineTo(0, 8); ctx.lineTo(-4, 0); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      // подпись
+      ctx.fillStyle = isCoin ? '#ffd75e' : col;
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign='center';
+      ctx.fillText(isCoin ? '1000' : (cr.ab==='armor'?'ЩИТ':cr.ab==='laser'?'ЛУЧ':'МИНЫ'), cr.x, cr.y+28);
+    }
+
+    // мины
+    for (const m of (s.mn || [])) {
+      const pulse = 1 + 0.18*Math.sin(now*6 + m.i);
+      ctx.fillStyle = '#1b1f2b';
+      ctx.strokeStyle = '#ffb458';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(m.x, m.y, 10*pulse, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#ff4d4d';
+      ctx.beginPath(); ctx.arc(m.x, m.y, 3.2, 0, Math.PI*2); ctx.fill();
+      // шипы
+      ctx.strokeStyle='#ffb458'; ctx.lineWidth=1.4;
+      for(let k=0;k<4;k++){ const ang=k*Math.PI/2+ now*2; ctx.beginPath(); ctx.moveTo(m.x+Math.cos(ang)*10, m.y+Math.sin(ang)*10); ctx.lineTo(m.x+Math.cos(ang)*14, m.y+Math.sin(ang)*14); ctx.stroke(); }
+    }
+
+    // лазеры (две стороны)
+    for (const ls of (s.ls || [])) {
+      const owner = (s.ps||[]).find(p=>p.i===ls.o);
+      if(!owner) continue;
+      const len = Math.hypot(W,H)+120;
+      const x2 = owner.x + Math.cos(owner.a)*len;
+      const y2 = owner.y + Math.sin(owner.a)*len;
+      const x1 = owner.x + Math.cos(owner.a+Math.PI)*len;
+      const y1 = owner.y + Math.sin(owner.a+Math.PI)*len;
+      ctx.strokeStyle = 'rgba(255,80,110,.95)';
+      ctx.shadowColor='#ff4d6d'; ctx.shadowBlur=14; ctx.lineWidth = 7;
+      ctx.beginPath(); ctx.moveTo(owner.x, owner.y); ctx.lineTo(x2,y2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(owner.x, owner.y); ctx.lineTo(x1,y1); ctx.stroke();
+      ctx.shadowBlur=0;
+      ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(owner.x, owner.y); ctx.lineTo(x2,y2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(owner.x, owner.y); ctx.lineTo(x1,y1); ctx.stroke();
+    }
+
+    // боссы
+    for (const b of (s.bo || [])) {
+      const def = BALANCE.bosses.types[b.k];
+      const r = def ? def.radius : 50;
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.a);
+      const col = b.k==='dreadnought' ? '#ff9d4d' : b.k==='phantom' ? '#9d7dff' : '#4dffc8';
+      const pulse = 1 + 0.06*Math.sin(now*3 + b.i);
+      ctx.scale(pulse, pulse);
+      // корпус
+      ctx.fillStyle = '#0f131c';
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      if(b.k==='leviathan'){
+        // круглый
+        ctx.arc(0,0,r,0,Math.PI*2);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle=col; ctx.beginPath(); ctx.arc(0,0,8,0,Math.PI*2); ctx.fill();
+        for(let k=0;k<6;k++){ const ang=k*Math.PI/3; ctx.fillStyle='#1a2333'; ctx.beginPath(); ctx.arc(Math.cos(ang)*(r-14), Math.sin(ang)*(r-14), 7,0,Math.PI*2); ctx.fill(); ctx.strokeStyle=col; ctx.lineWidth=1.2; ctx.stroke(); }
+      } else if(b.k==='phantom'){
+        ctx.moveTo(26,0); ctx.lineTo(-18,-22); ctx.lineTo(-10,0); ctx.lineTo(-18,22); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillStyle=col; ctx.beginPath(); ctx.arc(4,0,6,0,Math.PI*2); ctx.fill();
+      } else {
+        // dreadnought прямоугольный
+        ctx.fillRect(-r*0.9, -r*0.65, r*1.8, r*1.3);
+        ctx.strokeRect(-r*0.9, -r*0.65, r*1.8, r*1.3);
+        ctx.fillStyle='#1e2a3a'; ctx.fillRect(-r*0.6, -r*0.3, r*1.2, r*0.6);
+        ctx.fillStyle=col; ctx.fillRect(r*0.35, -6, 18,12);
+      }
+      ctx.restore();
+      // HP бар
+      const bw = 74;
+      ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(b.x-bw/2, b.y - r -18, bw, 7);
+      ctx.fillStyle = b.h/b.hm <0.3 ? '#ff4d4d' : col;
+      ctx.fillRect(b.x-bw/2, b.y - r -18, bw*Math.max(0,b.h/b.hm),7);
+      ctx.fillStyle='#fff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+      ctx.fillText((def?def.name:b.k).toUpperCase(), b.x, b.y - r -24);
+    }
+
     // корабли
     for (const p of s.ps) {
       if (!p.al) continue;
@@ -380,16 +549,70 @@ export function createRenderer(canvas) {
       ctx.arc(2, 0, 3.4, 0, Math.PI * 2);
       ctx.fill();
 
-      if (p.iv > 0 || p.sh > 0) { // щит неуязвимости
-        const shieldActive = p.iv > 0 || p.sh > 0;
-        ctx.globalAlpha = shieldActive ? (0.5 + 0.3 * Math.sin(now * 10)) : 0.35;
-        ctx.strokeStyle = p.sh > 0 && p.iv <= 0 ? '#5ad0ff' : '#bff1ff';
+      const ab = p.ab;
+      if (p.iv > 0) { // щит неуязвимости после респавна
+        ctx.globalAlpha = 0.5 + 0.3 * Math.sin(now * 10);
+        ctx.strokeStyle = '#bff1ff';
         ctx.lineWidth = 1.6;
         ctx.beginPath();
         ctx.arc(0, 0, 24, 0, Math.PI * 2);
         ctx.stroke();
       }
+      // временный щит с комет/врагов (голубой сплошной)
+      if (ab && ab.sh > 0) {
+        ctx.globalAlpha = 0.45 + 0.2*Math.sin(now*8);
+        ctx.strokeStyle = '#5ad0ff';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath(); ctx.arc(0,0, 26, 0,Math.PI*2); ctx.stroke();
+        ctx.globalAlpha = 0.18 + 0.08*Math.sin(now*8);
+        ctx.fillStyle = '#5ad0ff';
+        ctx.beginPath(); ctx.arc(0,0, 26, 0,Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      // ускорение стрельбы (оранжевое свечение)
+      if (ab && ab.rf > 0) {
+        ctx.globalAlpha = 0.38 + 0.18*Math.sin(now*12);
+        ctx.strokeStyle = '#ff6ba8';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0,0, 30, 0,Math.PI*2); ctx.stroke();
+        ctx.globalAlpha = 0.14;
+        ctx.fillStyle = '#ff6ba8';
+        ctx.beginPath(); ctx.arc(0,0, 30, 0,Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      // постоянный щит от босса (1 заряд, пунктир)
+      if (ab && ab.ar && ab.ac>0) {
+        ctx.globalAlpha = 0.35 + 0.2*Math.sin(now*6);
+        ctx.strokeStyle = '#7dd8ff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6,4]);
+        ctx.beginPath(); ctx.arc(0,0, 30, 0,Math.PI*2); ctx.stroke();
+        ctx.setLineDash([]);
+      }
       ctx.restore();
+      // индикаторы над кораблем
+      if (ab) {
+        let off = 0;
+        // приоритет: временные эффекты
+        if (ab.sh > 0) {
+          ctx.fillStyle='#5ad0ff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+          ctx.fillText('щит '+Math.ceil(ab.sh/1000)+'с', p.x, p.y-26 - off); off+=12;
+        }
+        if (ab.rf > 0) {
+          ctx.fillStyle='#ff6ba8'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+          ctx.fillText('⚡'+Math.ceil(ab.rf/1000)+'с', p.x, p.y-26 - off); off+=12;
+        }
+        if (ab.ar) {
+          const ac = ab.ac; const cd = ab.arCd;
+          if (ac>0) {
+            ctx.fillStyle='#7dd8ff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+            ctx.fillText('Щит x'+ac, p.x, p.y-26 - off);
+          } else if (cd>0) {
+            ctx.fillStyle='rgba(125,216,255,.7)'; ctx.font='10px sans-serif'; ctx.textAlign='center';
+            ctx.fillText(Math.ceil(cd/1000)+'с', p.x, p.y-26 - off);
+          }
+        }
+      }
     }
 
     // частицы поверх
@@ -418,7 +641,7 @@ export function createRenderer(canvas) {
     right: document.getElementById('hudRight'),
     timer: document.getElementById('timerText'),
     timerSub: document.getElementById('timerSub'),
-    boost: document.getElementById('boostIndicator'),
+    abilityBar: document.getElementById('abilityBar'),
     upgBtns: [...document.querySelectorAll('.upg-btn')],
   };
   const hudCache = {};
@@ -522,18 +745,25 @@ export function createRenderer(canvas) {
       const sub = opts.subText || (opts.solo ? 'время полёта' : 'до конца матча');
       if (hudEls.timerSub.textContent !== sub) hudEls.timerSub.textContent = sub;
 
-      if (hudEls.boost) {
-        const me2 = ps.find((p) => p.i === selfId);
-        if (me2 && me2.rf > 0) {
-          hudEls.boost.textContent = `СТРЕЛЬБА ×2 ${Math.ceil(me2.rf / 1000)}с`;
-          hudEls.boost.style.color = '#ff6ba8';
-          hudEls.boost.classList.remove('hidden');
-        } else if (me2 && me2.sh > 0) {
-          hudEls.boost.textContent = `ЩИТ ${Math.ceil(me2.sh / 1000)}с`;
-          hudEls.boost.style.color = '#5ad0ff';
-          hudEls.boost.classList.remove('hidden');
-        } else {
-          hudEls.boost.classList.add('hidden');
+      // способности и временные пауэр-апы
+      if (hudEls.abilityBar) {
+        if (!me || !me.ab) hudEls.abilityBar.innerHTML='';
+        else {
+          const ab = me.ab;
+          const fmt = (ms)=> ms<=0 ? 'ГОТОВ' : Math.ceil(ms/1000)+'с';
+          const parts=[];
+          if (ab.sh > 0) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:#0a2e4a;color:#5ad0ff;border:1px solid #2a6ea6">🛡 врем. щит ${Math.ceil(ab.sh/1000)}с</span>`);
+          if (ab.rf > 0) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:#4a1a3a;color:#ff6ba8;border:1px solid #a62a6e">⚡ ускорение ${Math.ceil(ab.rf/1000)}с</span>`);
+          if (ab.ar) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.ac>0?'#0e3a4a':'#222'};color:#7dd8ff;border:1px solid #2a5a6e">🛡 Броня x${ab.ac} ${ab.ac===0? '('+fmt(ab.arCd)+')':''}</span>`);
+          if (ab.ls) {
+            const active = ab.la>0;
+            parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${active?'#4a0e1a': ab.lc<=0?'#3a1a2a':'#222'};color:#ff7a9e;border:1px solid #6e2a3a">Q ЛАЗЕР ${active? Math.ceil(ab.la/1000)+'с' : fmt(ab.lc)}</span>`);
+          }
+          if (ab.mn) {
+            const maxM = ab.mx||5;
+            parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.mc<=0?'#2a2a0e':'#222'};color:#ffd27a;border:1px solid #6e5a2a">E МИНЫ ${ab.ml}/${maxM} ${ab.mc>0? '('+fmt(ab.mc)+')':''}</span>`);
+          }
+          hudEls.abilityBar.innerHTML = parts.join('');
         }
       }
     },
