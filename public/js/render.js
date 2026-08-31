@@ -258,7 +258,7 @@ export function createRenderer(canvas) {
         const vl = Math.hypot(vx, vy) || 1;
         const ux = -vx / vl;
         const uy = -vy / vl;
-        const len = 44 + a.r * 3;
+        const len = 20 + a.r * 1.5 + vl * 0.18;
         const grad = ctx.createLinearGradient(a.x, a.y, a.x + ux * len, a.y + uy * len);
         grad.addColorStop(0, 'rgba(160,215,255,.85)');
         grad.addColorStop(1, 'rgba(160,215,255,0)');
@@ -318,11 +318,11 @@ export function createRenderer(canvas) {
     for (const b of s.bs) {
       ctx.strokeStyle = b.e ? '#ff6b73' : '#fff2b0';
       ctx.shadowColor = b.e ? '#ff5a66' : '#ffd75e';
-      ctx.shadowBlur = 6;
-      ctx.lineWidth = 3;
+      ctx.shadowBlur = 7;
+      ctx.lineWidth = 4.5;
       ctx.beginPath();
       ctx.moveTo(b.x, b.y);
-      ctx.lineTo(b.x - Math.cos(b.a) * 11, b.y - Math.sin(b.a) * 11);
+      ctx.lineTo(b.x - Math.cos(b.a) * 15, b.y - Math.sin(b.a) * 15);
       ctx.stroke();
       ctx.shadowBlur = 0;
     }
@@ -550,6 +550,8 @@ export function createRenderer(canvas) {
       ctx.fill();
 
       const ab = p.ab;
+      // аура мигает только перед истечением эффекта (<2с), иначе ровная
+      const auraPulse = (msLeft) => (msLeft > 0 && msLeft < 2000) ? (0.15 + 0.85*Math.abs(Math.sin(now*16))) : 1;
       if (p.iv > 0) { // щит неуязвимости после респавна
         ctx.globalAlpha = 0.5 + 0.3 * Math.sin(now * 10);
         ctx.strokeStyle = '#bff1ff';
@@ -560,29 +562,31 @@ export function createRenderer(canvas) {
       }
       // временный щит с комет/врагов (голубой сплошной)
       if (ab && ab.sh > 0) {
-        ctx.globalAlpha = 0.45 + 0.2*Math.sin(now*8);
+        const pl = auraPulse(ab.sh);
+        ctx.globalAlpha = 0.62 * pl;
         ctx.strokeStyle = '#5ad0ff';
         ctx.lineWidth = 2.2;
         ctx.beginPath(); ctx.arc(0,0, 26, 0,Math.PI*2); ctx.stroke();
-        ctx.globalAlpha = 0.18 + 0.08*Math.sin(now*8);
+        ctx.globalAlpha = 0.24 * pl;
         ctx.fillStyle = '#5ad0ff';
         ctx.beginPath(); ctx.arc(0,0, 26, 0,Math.PI*2); ctx.fill();
         ctx.globalAlpha = 1;
       }
       // ускорение стрельбы (оранжевое свечение)
       if (ab && ab.rf > 0) {
-        ctx.globalAlpha = 0.38 + 0.18*Math.sin(now*12);
+        const pl = auraPulse(ab.rf);
+        ctx.globalAlpha = 0.54 * pl;
         ctx.strokeStyle = '#ff6ba8';
         ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(0,0, 30, 0,Math.PI*2); ctx.stroke();
-        ctx.globalAlpha = 0.14;
+        ctx.globalAlpha = 0.16 * pl;
         ctx.fillStyle = '#ff6ba8';
         ctx.beginPath(); ctx.arc(0,0, 30, 0,Math.PI*2); ctx.fill();
         ctx.globalAlpha = 1;
       }
-      // постоянный щит от босса (1 заряд, пунктир)
+      // постоянный щит от босса (1 заряд, пунктир) — постоянный, не мигает
       if (ab && ab.ar && ab.ac>0) {
-        ctx.globalAlpha = 0.35 + 0.2*Math.sin(now*6);
+        ctx.globalAlpha = 0.45;
         ctx.strokeStyle = '#7dd8ff';
         ctx.lineWidth = 2;
         ctx.setLineDash([6,4]);
@@ -590,29 +594,6 @@ export function createRenderer(canvas) {
         ctx.setLineDash([]);
       }
       ctx.restore();
-      // индикаторы над кораблем
-      if (ab) {
-        let off = 0;
-        // приоритет: временные эффекты
-        if (ab.sh > 0) {
-          ctx.fillStyle='#5ad0ff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
-          ctx.fillText('щит '+Math.ceil(ab.sh/1000)+'с', p.x, p.y-26 - off); off+=12;
-        }
-        if (ab.rf > 0) {
-          ctx.fillStyle='#ff6ba8'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
-          ctx.fillText('⚡'+Math.ceil(ab.rf/1000)+'с', p.x, p.y-26 - off); off+=12;
-        }
-        if (ab.ar) {
-          const ac = ab.ac; const cd = ab.arCd;
-          if (ac>0) {
-            ctx.fillStyle='#7dd8ff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
-            ctx.fillText('Щит x'+ac, p.x, p.y-26 - off);
-          } else if (cd>0) {
-            ctx.fillStyle='rgba(125,216,255,.7)'; ctx.font='10px sans-serif'; ctx.textAlign='center';
-            ctx.fillText(Math.ceil(cd/1000)+'с', p.x, p.y-26 - off);
-          }
-        }
-      }
     }
 
     // частицы поверх
