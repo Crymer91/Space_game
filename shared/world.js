@@ -442,6 +442,69 @@ function edgePoint(world) {
   return { x: -m, y: rand(world.rng, 0, h) };
 }
 
+function makeComet(world, x, y, vx, vy, r, rot) {
+  const def = asteroidDef('comet');
+  const ang = Math.atan2(vy, vx);
+  world.asteroids.push({
+    id: world.nextAsteroidId++,
+    type: 'comet',
+    x,
+    y,
+    vx,
+    vy,
+    r,
+    hp: def.hp,
+    maxHp: def.hp,
+    rot: rot != null ? rot : ang, // ориентирована по полёту
+    rotSpeed: rand(world.rng, -3, 3),
+    shapeSeed: randInt(world.rng, 1, 1e9),
+    entered: false, // станет true, когда комета войдёт в поле
+  });
+}
+
+// множественные кометы: 2-3 рядом летят параллельно, с боковым и продольным смещением
+function spawnMultipleComets(world, at, ang, sp) {
+  const def = asteroidDef('comet');
+  const count = randInt(world.rng, 2, 3);
+  const perp = ang + Math.PI / 2;
+  // чем больше комет в группе, тем медленнее полёт
+  const baseSp = sp * rand(world.rng, 0.9, 1.1) * (1 - (count - 2) * 0.18);
+  const vx = Math.cos(ang) * baseSp;
+  const vy = Math.sin(ang) * baseSp;
+  for (let k = 0; k < count; k++) {
+    const lat = (k - (count - 1) / 2) * rand(world.rng, 20, 40);
+    const lead = rand(world.rng, -40, 40); // вперёд/назад вдоль курса
+    makeComet(world,
+      at.x + Math.cos(perp) * lat + Math.cos(ang) * lead,
+      at.y + Math.sin(perp) * lat + Math.sin(ang) * lead,
+      vx, vy,
+      rand(world.rng, def.radiusMin, def.radiusMax));
+  }
+}
+
+// айсберг: 1 большая комета и за ней 1-3 маленьких
+function spawnIceberg(world, at, ang, sp) {
+  const def = asteroidDef('comet');
+  const perp = ang + Math.PI / 2;
+  const smallCount = randInt(world.rng, 1, 3);
+  const total = 1 + smallCount; // большая + маленькие
+  // чем больше комет в группе, тем медленнее полёт
+  const baseSp = sp * rand(world.rng, 0.85, 1.0) * (1 - (total - 1) * 0.15);
+  const vx = Math.cos(ang) * baseSp;
+  const vy = Math.sin(ang) * baseSp;
+  const bigR = rand(world.rng, def.radiusMax + 6, def.radiusMax + 12);
+  makeComet(world, at.x, at.y, vx, vy, bigR);
+  for (let k = 0; k < smallCount; k++) {
+    const trail = rand(world.rng, 26, 55) * (k + 1); // позади большой
+    const lat = rand(world.rng, -26, 26);
+    makeComet(world,
+      at.x - Math.cos(ang) * trail + Math.cos(perp) * lat,
+      at.y - Math.sin(ang) * trail + Math.sin(perp) * lat,
+      vx, vy,
+      rand(world.rng, def.radiusMin * 0.7, def.radiusMin));
+  }
+}
+
 function spawnComet(world) {
   const def = asteroidDef('comet');
   const w = B.world.width;
@@ -451,21 +514,18 @@ function spawnComet(world) {
   const ty = rand(world.rng, h * 0.15, h * 0.85);
   const ang = Math.atan2(ty - at.y, tx - at.x);
   const sp = rand(world.rng, def.speedMin, def.speedMax);
-  world.asteroids.push({
-    id: world.nextAsteroidId++,
-    type: 'comet',
-    x: at.x,
-    y: at.y,
-    vx: Math.cos(ang) * sp,
-    vy: Math.sin(ang) * sp,
-    r: rand(world.rng, def.radiusMin, def.radiusMax),
-    hp: def.hp,
-    maxHp: def.hp,
-    rot: ang, // комета ориентирована по полёту
-    rotSpeed: 0,
-    shapeSeed: randInt(world.rng, 1, 1e9),
-    entered: false, // станет true, когда комета войдёт в поле
-  });
+  const vx = Math.cos(ang) * sp;
+  const vy = Math.sin(ang) * sp;
+
+  // случайный вариант: одинарная / множественные / айсберг
+  const roll = world.rng();
+  if (roll < 0.35) {
+    spawnMultipleComets(world, at, ang, sp);
+  } else if (roll < 0.6) {
+    spawnIceberg(world, at, ang, sp);
+  } else {
+    makeComet(world, at.x, at.y, vx, vy, rand(world.rng, def.radiusMin, def.radiusMax));
+  }
 }
 
 // --- вражеские корабли-охотники ---
@@ -563,6 +623,32 @@ function updateEnemies(world, dt, now) {
         addFx(world, 'shoot', e.x + Math.cos(e.a) * nose, e.y + Math.sin(e.a) * nose, 1);
       }
     }
+    // --- уворот от астероидов и комет ---
+    let keepTarget = true;
+    let dodgeX = 0;
+    let dodgeY = 0;
+    const lookAhead = E.maxSpeed * 0.5 + 40; // смотрим вперёд по ходу движения
+    for (const a of world.asteroids) {
+      if (a.dead) continue;
+      const dx = a.x - e.x;
+      const dy = a.y - e.y;
+      const dist = Math.hypot(dx, dy);
+      const danger = a.r + E.radius + lookAhead;
+      if (dist < danger && dist > 0.001) {
+        // уворачиваемся перпендикулярно направлению на астероид
+        const push = (1 - dist / danger) * 1.6;
+        dodgeX -= (dx / dist) * push;
+        dodgeY -= (dy / dist) * push;
+        if (dist < a.r + E.radius + 30) keepTarget = false;
+      }
+    }
+    if (dodgeX !== 0 || dodgeY !== 0) {
+      ax += dodgeX;
+      ay += dodgeY;
+    } else if (!keepTarget) {
+      ax = 0; ay = 0;
+    }
+
     e.vx += ax * E.accel * dt;
     e.vy += ay * E.accel * dt;
     const damp = Math.exp(-2 * dt);
@@ -689,6 +775,32 @@ function updateBosses(world, dt, now) {
     b.y=Math.max(def.radius, Math.min(h-def.radius,b.y));
   }
   world.bosses = world.bosses.filter(b=>!b.dead);
+}
+
+// боссы расталкивают астероиды и кометы
+function pushAsteroidsByBosses(world, dt) {
+  for (const b of world.bosses) {
+    if (b.dead) continue;
+    const def = bossDef(b.key);
+    for (const a of world.asteroids) {
+      if (a.dead) continue;
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      const dist = Math.hypot(dx, dy);
+      const minDist = a.r + def.radius;
+      if (dist >= minDist || dist < 0.001) continue;
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const overlap = minDist - dist;
+      // сдвигаем за пределы хитбокса босса
+      a.x += nx * (overlap + 4);
+      a.y += ny * (overlap + 4);
+      // разлетаются в сторону от босса
+      const push = 180 + overlap * 12;
+      a.vx = nx * push;
+      a.vy = ny * push;
+    }
+  }
 }
 
 // --- лазеры и мины ---
@@ -1002,16 +1114,16 @@ export function stepWorld(world, dtSec, inputs) {
     }
   }
 
-  // --- столкновения: пули игроков × астероиды ---
+  // --- столкновения: пули (игроков и врагов) × астероиды и кометы ---
   for (const b of world.bullets) {
-    if (b.dead || b.enemy) continue;
+    if (b.dead) continue;
     for (const a of world.asteroids) {
       if (a.dead) continue;
       const dx = a.x - b.x;
       const dy = a.y - b.y;
       const rr = a.r + B.bullet.radius;
       if (dx * dx + dy * dy <= rr * rr) {
-        const owner = world.players.find((p) => p.id === b.owner) || null;
+        const owner = b.enemy ? null : (world.players.find((p) => p.id === b.owner) || null);
         a.hp -= owner ? bulletDamage(owner) : 1;
         b.dead = true;
         if (a.hp <= 0) destroyAsteroid(world, a, owner);
@@ -1042,6 +1154,23 @@ export function stepWorld(world, dtSec, inputs) {
     }
   }
   world.enemies = world.enemies.filter((e) => !e.dead);
+
+  // --- столкновения: простые противники × астероиды и кометы ---
+  for (const e of world.enemies) {
+    if (e.dead) continue;
+    for (const a of world.asteroids) {
+      if (a.dead) continue;
+      const dx = a.x - e.x;
+      const dy = a.y - e.y;
+      const rr = a.r + B.enemies.radius;
+      if (dx * dx + dy * dy <= rr * rr) {
+        killEnemy(world, e, null);
+        break;
+      }
+    }
+  }
+  world.enemies = world.enemies.filter((e) => !e.dead);
+  world.asteroids = world.asteroids.filter((a) => !a.dead);
 
   // --- столкновения: пули игроков × боссы ---
   for (const b of world.bullets) {
@@ -1165,6 +1294,7 @@ export function stepWorld(world, dtSec, inputs) {
   // --- враги, боссы, ракеты, способности ---
   updateEnemies(world, dt, now);
   updateBosses(world, dt, now);
+  pushAsteroidsByBosses(world, dt);
   updateMissiles(world, dt, now);
   updateMines(world, dt, now);
   updateLasers(world, dt, now);
