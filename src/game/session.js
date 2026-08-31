@@ -46,6 +46,8 @@ export class GameSession {
       aim: Number.isFinite(aim) ? aim : undefined,
       shoot: !!payload.shoot,
       mis: !!payload.mis,
+      laser: !!payload.laser,
+      mine: !!payload.mine,
     };
   }
 

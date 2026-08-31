@@ -53,8 +53,9 @@ export function registerHandlers(io, { db, config, roomManager, matchmaking, gam
       if (typeof ack === 'function') ack({ ok: true });
     }));
 
-    socket.on('matchmaking:cancel', requireAuth(() => {
+    socket.on('matchmaking:cancel', requireAuth((payload, ack) => {
       matchmaking.cancelFind(socket.id);
+      if (typeof ack === 'function') ack({ ok: true });
     }));
 
     socket.on('room:create', requireAuth((payload = {}, ack) => {
