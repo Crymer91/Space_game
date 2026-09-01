@@ -4,6 +4,9 @@ import { BALANCE } from '/shared/balance.js';
 const W = BALANCE.world.width;
 const H = BALANCE.world.height;
 
+const SHIP_IMG = new Image();
+SHIP_IMG.src = '/img/player/ship.png';
+
 const SLOT_COLORS = ['#5ad0ff', '#ffb458', '#7dff9e', '#ff8ad8'];
 const FX_COLORS = {
   boom: ['#ffd75e', '#ff9d4d', '#ff6b4a'],
@@ -532,22 +535,27 @@ export function createRenderer(canvas) {
         ctx.fill();
       }
 
-      ctx.fillStyle = '#12161f';
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      ctx.moveTo(19, 0);
-      ctx.lineTo(-12, -11);
-      ctx.lineTo(-6, 0);
-      ctx.lineTo(-12, 11);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
+      if (SHIP_IMG && SHIP_IMG.complete && SHIP_IMG.naturalWidth > 0) {
+        ctx.rotate(Math.PI / 2);
+        ctx.drawImage(SHIP_IMG, -19, -19, 38, 38);
+      } else {
+        ctx.fillStyle = '#12161f';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(19, 0);
+        ctx.lineTo(-12, -11);
+        ctx.lineTo(-6, 0);
+        ctx.lineTo(-12, 11);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
 
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(2, 0, 3.4, 0, Math.PI * 2);
-      ctx.fill();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(2, 0, 3.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       const ab = p.ab;
       // аура мигает только перед истечением эффекта (<2с), иначе ровная
