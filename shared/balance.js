@@ -19,7 +19,7 @@ export const BALANCE = {
   bullet: {
     speed: 560,
     lifeMs: 1100,
-    radius: 3.5,
+    radius: 5,
   },
 
   asteroid: {
@@ -49,7 +49,7 @@ export const BALANCE = {
       radiusMin: 11, radiusMax: 15,
       hp: 2, score: 75,
       coinsMin: 1, coinsMax: 2,
-      speedMin: 270, speedMax: 420,
+      speedMin: 540, speedMax: 840,
     },
   },
 
@@ -146,13 +146,13 @@ export const BALANCE = {
     types: {
       dreadnought: {
         key: 'dreadnought', name: 'Дредноут',
-        score: 10000, hp: 70, radius: 52, scoreReward: 600,
+        score: 10000, hp: 140, radius: 52, scoreReward: 600,
         accel: 90, maxSpeed: 95, turnRate: 1.6,
         fireCooldownMs: 900, bulletSpeed: 380, bulletCount: 3, spread: 0.22,
       },
       phantom: {
         key: 'phantom', name: 'Фантом',
-        score: 20000, hp: 125, radius: 46, scoreReward: 900,
+        score: 20000, hp: 250, radius: 46, scoreReward: 900,
         accel: 220, maxSpeed: 165, turnRate: 2.8,
         fireCooldownMs: 700, bulletSpeed: 460, bulletCount: 1,
         strafeSpeed: 140,
@@ -160,7 +160,7 @@ export const BALANCE = {
       },
       leviathan: {
         key: 'leviathan', name: 'Левиафан',
-        score: 30000, hp: 140, radius: 60, scoreReward: 1200,
+        score: 30000, hp: 280, radius: 60, scoreReward: 1200,
         accel: 70, maxSpeed: 105, turnRate: 1.2,
         fireCooldownMs: 1200, bulletSpeed: 340, bulletCount: 8, // круговой залп
       },
