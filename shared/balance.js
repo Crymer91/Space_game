@@ -142,17 +142,17 @@ export const BALANCE = {
   },
 
   bosses: {
-    thresholds: [10000, 20000, 30000],
+    // Боссы выпускаются волнами через waves.list[].bosses (см. конфигурацию волн).
     types: {
       dreadnought: {
         key: 'dreadnought', name: 'Дредноут',
-        score: 10000, hp: 140, radius: 52, scoreReward: 600,
+        hp: 140, radius: 52, scoreReward: 600,
         accel: 90, maxSpeed: 95, turnRate: 1.6,
         fireCooldownMs: 900, bulletSpeed: 380, bulletCount: 3, spread: 0.22,
       },
       phantom: {
         key: 'phantom', name: 'Фантом',
-        score: 20000, hp: 250, radius: 46, scoreReward: 900,
+        hp: 250, radius: 46, scoreReward: 900,
         accel: 220, maxSpeed: 165, turnRate: 2.8,
         fireCooldownMs: 700, bulletSpeed: 460, bulletCount: 1,
         strafeSpeed: 140,
@@ -160,7 +160,7 @@ export const BALANCE = {
       },
       leviathan: {
         key: 'leviathan', name: 'Левиафан',
-        score: 30000, hp: 280, radius: 60, scoreReward: 1200,
+        hp: 280, radius: 60, scoreReward: 1200,
         accel: 70, maxSpeed: 105, turnRate: 1.2,
         fireCooldownMs: 1200, bulletSpeed: 340, bulletCount: 8, // круговой залп
       },
@@ -198,12 +198,108 @@ export const BALANCE = {
     orbitSpeedMax: 1.9,
   },
 
+  // Реестр типов спавнящихся противников в волнах. Каждый вид имеет параметры
+  // по умолчанию; конкретная волна может их переопределить.
+  //   intervalMs   — частота появления (интервал между спавнами, мс)
+  //   count        — сколько объектов этого вида за волну
+  //   max          — потолок одновременно на арене
+  //   composition  — (только для астероидов) состав волны: веса типов
+  // ПРИ ДОБАВЛЕНИИ НОВОГО ВИДА ПРОТИВНИКА:
+  //   1) добавьте запись сюда (ключ = id вида),
+  //   2) добавьте обработчик в shared/world.js в объект SPAWNERS по этому ключу.
+  enemyKinds: {
+    asteroid: { intervalMs: 1400, count: 14, max: 14,
+      composition: { small: 0.6, medium: 0.32, large: 0.08 } },
+    comet:    { intervalMs: 1900, count: 6,  max: 6 },
+    enemy:    { intervalMs: 8000, count: 2,  max: 2 },
+  },
+
+  // Очередь волн. Каждая волна:
+  //   durationMs   — время волны (сколько она длится)
+  //   cooldownMs   — период охлаждения после волны (пауза без спавна)
+  //   bosses       — боссы, выпускаемые в начале волны: ['dreadnought', 'phantom', 'leviathan']
+  //   spawns       — какие виды противников появляются и с какими параметрами:
+  //                  [{ kind: 'вид', intervalMs?, count?, max?, composition? }]
+  //                  пропущенные поля берутся из enemyKinds; вид не указан — не спавнится.
+  //                  Новый вид противника добавляется новой записью в этом списке.
+  // Волны проигрываются по порядку; после последней повторяется она же.
   waves: {
-    startIntervalMs: 1400,
-    minIntervalMs: 480,
-    rampMs: 90000,             // за это время интервал падает до минимума
-    // веса типов в начале и в конце матча (линейная интерполяция)
-    weightsStart: { small: 0.6, medium: 0.32, large: 0.08 },
-    weightsEnd:   { small: 0.34, medium: 0.42, large: 0.24 },
+    list: [
+      // 1. Затишье: только астероиды
+      { durationMs: 10000, cooldownMs: 2000,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1600, count: 8,
+            composition: { small: 0.80, medium: 0.20, large: 0.00 } },
+        ] },
+      // 2. Разгон: крупнее астероиды + первые кометы
+      { durationMs: 12000, cooldownMs: 2000,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1200, count: 12,
+            composition: { small: 0.60, medium: 0.35, large: 0.05 } },
+          { kind: 'comet', intervalMs: 2600, count: 3 },
+        ] },
+      // 3. Первый охотник: подключается вражеский корабль
+      { durationMs: 13000, cooldownMs: 2200,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1100, count: 12,
+            composition: { small: 0.50, medium: 0.40, large: 0.10 } },
+          { kind: 'comet', intervalMs: 2400, count: 3 },
+          { kind: 'enemy', intervalMs: 9000, count: 1 },
+        ] },
+      // 4. Дредноут с эскортом из комет и охотников
+      { durationMs: 15000, cooldownMs: 3000, bosses: ['dreadnought'],
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1400, count: 10,
+            composition: { small: 0.45, medium: 0.40, large: 0.15 } },
+          { kind: 'comet', intervalMs: 2200, count: 4 },
+          { kind: 'enemy', intervalMs: 8000, count: 1 },
+        ] },
+      // 5. Кометный ливень
+      { durationMs: 12000, cooldownMs: 2000,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1000, count: 14,
+            composition: { small: 0.40, medium: 0.40, large: 0.20 } },
+          { kind: 'comet', intervalMs: 1200, count: 8 },
+        ] },
+      // 6. Стая охотников
+      { durationMs: 14000, cooldownMs: 2500,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 900, count: 16,
+            composition: { small: 0.30, medium: 0.45, large: 0.25 } },
+          { kind: 'enemy', intervalMs: 6000, count: 3 },
+        ] },
+      // 7. Фантом под прикрытием комет и врагов
+      { durationMs: 16000, cooldownMs: 3000, bosses: ['phantom'],
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1200, count: 12,
+            composition: { small: 0.35, medium: 0.45, large: 0.20 } },
+          { kind: 'comet', intervalMs: 1800, count: 5 },
+          { kind: 'enemy', intervalMs: 7000, count: 2 },
+        ] },
+      // 8. Полная тревога: всё и сразу
+      { durationMs: 14000, cooldownMs: 2000,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 700, count: 20,
+            composition: { small: 0.30, medium: 0.40, large: 0.30 } },
+          { kind: 'comet', intervalMs: 1400, count: 8 },
+          { kind: 'enemy', intervalMs: 5500, count: 4 },
+        ] },
+      // 9. Левиафан — финал всех фаз
+      { durationMs: 18000, cooldownMs: 4000, bosses: ['leviathan'],
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1000, count: 14,
+            composition: { small: 0.30, medium: 0.40, large: 0.30 } },
+          { kind: 'comet', intervalMs: 1500, count: 6 },
+          { kind: 'enemy', intervalMs: 6000, count: 3 },
+        ] },
+      // 10. Бесконечный затяжной бой (повторяется) — без босса
+      { durationMs: 15000, cooldownMs: 2500,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 850, count: 18,
+            composition: { small: 0.35, medium: 0.40, large: 0.25 } },
+          { kind: 'comet', intervalMs: 1600, count: 7 },
+          { kind: 'enemy', intervalMs: 6000, count: 3 },
+        ] },
+    ],
   },
 };

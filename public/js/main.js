@@ -4,6 +4,7 @@ import { createInput } from './input.js';
 import { createRenderer } from './render.js';
 import { startLocalGame } from './local.js';
 import { startMultiGame } from './multi.js';
+import { BALANCE } from '/shared/balance.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -95,7 +96,10 @@ function noiseBurst({ dur = 0.35, vol = 0.25, cutoff = 900 }) {
 renderer.onFx((f, state) => {
   // глобальные оповещения об угрозах — без приглушения по расстоянию
   if (f.tp === 'warning') {
-    if (f.z >= 3) showAnnounce(f.z===3?'☠ БОСС ДРЕДНОУТ!':f.z===4?'☠ БОСС ФАНТОМ!':'☠ БОСС ЛЕВИАФАН!');
+    if (f.k) {
+      const def = BALANCE.bosses.types[f.k];
+      showAnnounce('☠ БОСС ' + ((def ? def.name : f.k) + '').toUpperCase() + '!');
+    } else if (f.z >= 3) showAnnounce(f.z===3?'☠ БОСС ДРЕДНОУТ!':f.z===4?'☠ БОСС ФАНТОМ!':'☠ БОСС ЛЕВИАФАН!');
     else showAnnounce(f.z === 2 ? '⚠ ВРАЖЕСКИЕ КОРАБЛИ!' : '⚠ СКОРОСТНЫЕ КОМЕТЫ!');
     tone({ type: 'sawtooth', from: 620, to: 330, dur: 0.42, vol: 0.12 });
     setTimeout(() => tone({ type: 'sawtooth', from: 620, to: 330, dur: 0.42, vol: 0.12 }), 500);

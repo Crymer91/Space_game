@@ -38,7 +38,10 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     durationMs: durationMs == null ? null : durationMs,
     timeLeftMs: durationMs == null ? null : durationMs,
     status: 'running',
-    spawnTimerMs: 500,
+    waveIndex: 0,
+    wavePhase: 'spawning',
+    waveTimer: 0,
+    waveSpawns: {},
     nextAsteroidId: 1,
     nextBulletId: 1,
     nextCoinId: 1,
@@ -62,11 +65,8 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     nextLaserId: 1,
     nextPowerupId: 1,
     powerups: [],
-    cometsUnlocked: false,
-    enemiesUnlocked: false,
-    cometTimerMs: 1000,
-    enemyTimerMs: B.enemies.firstSpawnDelayMs,
-    bossSpawned: [false, false, false],
+    bossSpawnedKeys: {},
+    bossesFought: 0,
     nebulaActive: false,
   };
   let i = 0;
@@ -110,6 +110,8 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
       shieldUntil: 0,
     });
   }
+  const w0 = B.waves.list && B.waves.list[0];
+  if (w0) startWave(world, w0);
   return world;
 }
 
@@ -167,8 +169,8 @@ export function buyUpgrade(world, playerId, track) {
   return { ok: true, track, cost };
 }
 
-function addFx(world, type, x, y, size = 1) {
-  world.fx.push({ id: world.nextFxId++, type, x, y, size, bornAt: world.t });
+function addFx(world, type, x, y, size = 1, extra) {
+  world.fx.push({ id: world.nextFxId++, type, x, y, size, bornAt: world.t, ...(extra || {}) });
   if (world.fx.length > 48) world.fx.splice(0, world.fx.length - 48);
 }
 
@@ -191,18 +193,12 @@ function asteroidDef(type) {
   return B.asteroid[type];
 }
 
-function pickAsteroidType(world) {
-  const W = B.waves;
-  const prog = Math.min(1, world.t / W.rampMs);
-  const weights = {
-    small: lerp(W.weightsStart.small, W.weightsEnd.small, prog),
-    medium: lerp(W.weightsStart.medium, W.weightsEnd.medium, prog),
-    large: lerp(W.weightsStart.large, W.weightsEnd.large, prog),
-  };
-  const total = weights.small + weights.medium + weights.large;
+function pickAsteroidType(world, composition) {
+  const c = composition || { small: 1, medium: 0, large: 0 };
+  const total = (c.small || 0) + (c.medium || 0) + (c.large || 0);
   let r = world.rng() * total;
   for (const key of ['small', 'medium', 'large']) {
-    r -= weights[key];
+    r -= c[key] || 0;
     if (r <= 0) return key;
   }
   return 'small';
@@ -559,6 +555,25 @@ function spawnEnemy(world) {
   });
 }
 
+// Реестр видов противников, спавнящихся в волнах. Ключ должен совпадать с ключом
+// в BALANCE.enemyKinds. Каждый вид — это { spawn(world, cfg), countAlive(world) }.
+// При добавлении нового вида противника: добавьте сюда обработчик по его ключу,
+// а параметры по умолчанию — в shared/balance.js (enemyKinds).
+const SPAWNERS = {
+  asteroid: {
+    spawn(world, cfg) { spawnAsteroid(world, pickAsteroidType(world, cfg.composition)); },
+    countAlive(world) { return world.asteroids.reduce((n, a) => n + (a.type !== 'comet' ? 1 : 0), 0); },
+  },
+  comet: {
+    spawn(world) { spawnComet(world); },
+    countAlive(world) { return world.asteroids.reduce((n, a) => n + (a.type === 'comet' ? 1 : 0), 0); },
+  },
+  enemy: {
+    spawn(world) { spawnEnemy(world); },
+    countAlive(world) { return world.enemies.length; },
+  },
+};
+
 export function killEnemy(world, e, owner) {
   e.dead = true;
   if (owner) {
@@ -667,10 +682,8 @@ function updateEnemies(world, dt, now) {
 
 // --- боссы ---
 function bossDef(key) { return B.bosses.types[key]; }
-function thresholdKey(idx) { return ['dreadnought','phantom','leviathan'][idx]; }
 
-function spawnBoss(world, idx) {
-  const key = thresholdKey(idx);
+function spawnBoss(world, key) {
   const def = bossDef(key);
   if (!def) return;
   const w = B.world.width;
@@ -685,9 +698,22 @@ function spawnBoss(world, idx) {
     fireCdAt: world.t + 900,
     mineCdAt: world.t + (def.mineIntervalMs||5000),
   });
-  world.bossSpawned[idx]=true;
-  addFx(world,'warning', w/2, 90, 3);
+  if (!world.bossSpawnedKeys[key]) {
+    world.bossSpawnedKeys[key] = true;
+    world.bossesFought++;
+  }
+  addFx(world,'warning', w/2, 90, 3, { k: key });
   addFx(world,'spawn', x, y, 3);
+}
+
+// Начало волны: сбрасываем счётчики спавна и выпускаем боссов из конфигурации волны
+function startWave(world, wave) {
+  world.wavePhase = 'spawning';
+  world.waveTimer = wave.durationMs;
+  world.waveSpawns = {};
+  for (const key of (wave.bosses || [])) {
+    spawnBoss(world, key);
+  }
 }
 
 function destroyBoss(world, boss, owner) {
@@ -1311,54 +1337,51 @@ export function stepWorld(world, dtSec, inputs) {
   // --- эффекты: удаляем старше 600 мс ---
   world.fx = world.fx.filter((f) => now - f.bornAt < 600);
 
-  // --- волны астероидов ---
-  world.spawnTimerMs -= dt * 1000;
-  if (world.spawnTimerMs <= 0) {
-    const W = B.waves;
-    const prog = Math.min(1, world.t / W.rampMs);
-    const interval = lerp(W.startIntervalMs, W.minIntervalMs, prog);
-    world.spawnTimerMs += interval * rand(world.rng, 0.75, 1.25);
-    if (world.asteroids.length < B.asteroid.maxCount) {
-      spawnAsteroid(world, pickAsteroidType(world));
+  // --- волны противников (состав, время, частота, кол-во, охлаждение) ---
+  {
+    const WA = B.waves;
+    const list = WA.list || [];
+    const K = B.enemyKinds || {};
+    if (list.length) {
+      const idx = Math.min(world.waveIndex, list.length - 1);
+      const wave = list[idx];
+      world.waveTimer -= dt * 1000;
+
+      if (world.wavePhase === 'spawning') {
+        // частота появления: по каждому виду спавним по таймеру,
+        // пока не исчерпан лимит вида за волну или потолок на арене
+        for (const entry of (wave.spawns || [])) {
+          const kind = entry.kind;
+          const handler = SPAWNERS[kind];
+          if (!handler) continue;
+          const def = K[kind] || {};
+          const cfg = Object.assign({}, def, entry);
+          let st = world.waveSpawns[kind] || (world.waveSpawns[kind] = { timer: 500, spawned: 0 });
+          st.timer -= dt * 1000;
+          if (st.spawned < cfg.count && st.timer <= 0) {
+            if (handler.countAlive(world) < cfg.max) {
+              handler.spawn(world, cfg);
+              st.spawned++;
+            }
+            st.timer += cfg.intervalMs * rand(world.rng, 0.75, 1.25);
+          }
+        }
+        // конец волны: по времени
+        if (world.waveTimer <= 0) {
+          world.wavePhase = 'cooldown';
+          world.waveTimer = wave.cooldownMs;
+        }
+      } else { // cooldown — период охлаждения после волны
+        if (world.waveTimer <= 0) {
+          if (world.waveIndex < list.length - 1) world.waveIndex++;
+          startWave(world, list[Math.min(world.waveIndex, list.length - 1)]);
+        }
+      }
     }
   }
 
-  // --- уровни угрозы по счёту ---
-  const maxScore = world.players.reduce((m, p) => Math.max(m, p.score), 0);
-  if (!world.cometsUnlocked && maxScore >= B.comets.unlockScore) {
-    world.cometsUnlocked = true;
-    world.cometTimerMs = 600;
-    addFx(world, 'warning', w / 2, 100, 1);
-  }
-  if (!world.enemiesUnlocked && maxScore >= B.enemies.unlockScore) {
-    world.enemiesUnlocked = true;
-    world.enemyTimerMs = B.enemies.firstSpawnDelayMs;
-    addFx(world, 'warning', w / 2, 140, 2);
-  }
-  if (world.cometsUnlocked) {
-    world.cometTimerMs -= dt * 1000;
-    if (world.cometTimerMs <= 0) {
-      world.cometTimerMs += rand(world.rng, B.comets.intervalMinMs, B.comets.intervalMaxMs);
-      if (world.asteroids.length < B.asteroid.maxCount + 6) spawnComet(world);
-    }
-  }
-  if (world.enemiesUnlocked) {
-    world.enemyTimerMs -= dt * 1000;
-    if (world.enemyTimerMs <= 0) {
-      world.enemyTimerMs += rand(world.rng, B.enemies.intervalMinMs, B.enemies.intervalMaxMs);
-      if (world.enemies.length < B.enemies.maxAlive) spawnEnemy(world);
-    }
-  }
-  // --- боссы по достижении счёта ---
-  for (let i = 0; i < B.bosses.thresholds.length; i++) {
-    if (!world.bossSpawned[i] && maxScore >= B.bosses.thresholds[i]) {
-      spawnBoss(world, i);
-      // объявляем имя босса
-      addFx(world, 'warning', w / 2, 90 + i * 20, 3 + i);
-    }
-  }
-  // --- туманность после второго босса (20к) — фиолетовый фон + спутники ---
-  if (!world.nebulaActive && world.bossSpawned[1]) {
+  // --- туманность после двух боссов — фиолетовый фон + спутники ---
+  if (!world.nebulaActive && world.bossesFought >= 2) {
     world.nebulaActive = true;
     addFx(world, 'nebula', w/2, h/2, 3);
     // дооснастить существующие астероиды спутниками
@@ -1475,6 +1498,6 @@ export function snapshotOf(world) {
     cr: world.crystals.map((c)=>({ i:c.id, x:Math.round(c.x), y:Math.round(c.y), k:c.kind, ab:c.ability||undefined })),
     mn: world.mines.map((m)=>({ i:m.id, x:Math.round(m.x), y:Math.round(m.y) })),
     ls: world.lasers.map((l)=>({ i:l.id, x:Math.round(l.x), y:Math.round(l.y), a:Math.round(l.a*100)/100, o:l.owner })),
-    fx: world.fx.map((f) => ({ i: f.id, tp: f.type, x: Math.round(f.x), y: Math.round(f.y), z: f.size })),
+    fx: world.fx.map((f) => ({ i: f.id, tp: f.type, x: Math.round(f.x), y: Math.round(f.y), z: f.size, k: f.k })),
   };
 }
