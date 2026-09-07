@@ -1,11 +1,13 @@
 // Реестр игровых сессий: одна комната (playing) = один GameSession.
 import { GameSession } from './session.js';
+import { addCoins } from '../db.js';
 
 export class GameManager {
-  constructor({ io, config, logger }) {
+  constructor({ io, config, logger, db }) {
     this.io = io;
     this.config = config;
     this.logger = logger;
+    this.db = db;
     this.sessions = new Map(); // roomId -> GameSession
   }
 
@@ -20,6 +22,14 @@ export class GameManager {
     });
     // естественное завершение матча: рассылаем результаты и закрываем комнату
     session.onOver = (results) => {
+      // монеты, собранные в мультиплеере, уходят в банк coinsMulti
+      if (this.db) {
+        for (const p of results.players || []) {
+          if (p && p.playerId && p.coinsEarned > 0) {
+            addCoins(this.db, p.playerId, 'multi', p.coinsEarned);
+          }
+        }
+      }
       this.io.to(room.id).emit('game:over', results);
       roomManager.endGame(room, results.winner);
     };

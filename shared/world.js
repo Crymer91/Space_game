@@ -47,11 +47,13 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     nextAsteroidId: 1,
     nextBulletId: 1,
     nextCoinId: 1,
+    nextEnergyId: 1,
     nextFxId: 1,
     players: [],
     asteroids: [],
     bullets: [],
     coins: [],
+    energySpheres: [],
     enemies: [],
     missiles: [],
     fx: [],
@@ -85,7 +87,10 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
       alive: true,
       out: false, // потерял все жизни
       lives: B.ship.lives,
-      coins: 0,
+      coins: 0, // монеты, собранные в матче (в конце матча уходят в банк режима)
+      energy: 0, // матчевый ресурс-прогресс (экспа), накапливается и не тратится
+      exp: 0, // всего накоплено экспы (энергии) за матч
+      level: 1, // текущий уровень rogue-like
       score: 0,
       kills: 0,
       deaths: 0,
@@ -133,42 +138,11 @@ export function upgradeCost(track, level) {
   return def.costs[level] ?? null; // null = максимальный уровень
 }
 
-export function buyUpgrade(world, playerId, track) {
-  if (world.status !== 'running') return { error: 'match-over' };
-  const p = world.players.find((pl) => pl.id === playerId);
-  if (!p || !p.alive) return { error: 'not-found' };
-
-  if (track === 'life') {
-    const def = B.upgrades.life;
-    if (!def) return { error: 'bad-track' };
-    if (p.lives >= def.maxLives) return { error: 'max-level' };
-    if (p.coins < def.cost) return { error: 'not-enough-coins' };
-    p.coins -= def.cost;
-    p.lives++;
-    addFx(world, 'upgrade', p.x, p.y, 1);
-    return { ok: true, track, cost: def.cost };
-  }
-
-  if (track === 'missiles') {
-    const def = B.upgrades.missiles;
-    if (!def) return { error: 'bad-track' };
-    if (p.missiles >= def.maxAmmo) return { error: 'max-level' };
-    if (p.coins < def.cost) return { error: 'not-enough-coins' };
-    p.coins -= def.cost;
-    p.missiles = Math.min(def.maxAmmo, p.missiles + def.pack);
-    addFx(world, 'upgrade', p.x, p.y, 1);
-    return { ok: true, track, cost: def.cost };
-  }
-
-  if (!B.upgrades[track]) return { error: 'bad-track' };
-  const cost = upgradeCost(track, p[track === 'damage' ? 'dmgLvl' : 'rateLvl']);
-  if (cost == null) return { error: 'max-level' };
-  if (p.coins < cost) return { error: 'not-enough-coins' };
-  p.coins -= cost;
-  if (track === 'damage') p.dmgLvl++;
-  else p.rateLvl++;
-  addFx(world, 'upgrade', p.x, p.y, 1);
-  return { ok: true, track, cost };
+// A1: монеты больше нельзя тратить внутри матча — покупки перенесены в Ангар
+// (между матчами). В бою улучшения будут выдаваться бесплатными карточками при
+// достижении уровня (rogue-like, задача А3), поэтому функция отключена.
+export function buyUpgrade() {
+  return { error: 'store-disabled', message: 'Апгрейды покупаются в Ангаре, а не в бою' };
 }
 
 function addFx(world, type, x, y, size = 1, extra) {
@@ -278,6 +252,23 @@ function spawnCoinBurst(world, x, y, count) {
   }
 }
 
+// Энергетические сферы (экспа): физически ведут себя как монеты — разлетаются,
+// притягиваются магнитом, подбираются при касании. Но добавляют energy, а не coins.
+function spawnEnergyBurst(world, x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const ang = world.rng() * Math.PI * 2;
+    const sp = rand(world.rng, 40, 170);
+    world.energySpheres.push({
+      id: world.nextEnergyId++,
+      x,
+      y,
+      vx: Math.cos(ang) * sp,
+      vy: Math.sin(ang) * sp,
+      born: world.t,
+    });
+  }
+}
+
 function spawnPowerup(world, x, y) {
   const types = Object.keys(B.powerups.types);
   const tp = types[Math.floor(world.rng() * types.length)];
@@ -301,6 +292,8 @@ function destroyAsteroid(world, a, owner) {
   }
   const coins = randInt(world.rng, def.coinsMin, def.coinsMax);
   if (coins > 0) spawnCoinBurst(world, a.x, a.y, coins);
+  const energy = randInt(world.rng, def.energyMin, def.energyMax);
+  if (energy > 0) spawnEnergyBurst(world, a.x, a.y, energy);
   if (a.type === 'comet' && world.rng() < B.powerups.cometChance) {
     spawnPowerup(world, a.x, a.y);
   }
@@ -679,6 +672,8 @@ export function killEnemy(world, e, owner) {
     owner.kills++;
   }
   spawnCoinBurst(world, e.x, e.y, randInt(world.rng, B.enemies.coinsMin, B.enemies.coinsMax));
+  const eEnergy = randInt(world.rng, B.enemies.energyMin, B.enemies.energyMax);
+  if (eEnergy > 0) spawnEnergyBurst(world, e.x, e.y, eEnergy);
   if (world.rng() < B.powerups.enemyChance) {
     spawnPowerup(world, e.x, e.y);
   }
@@ -1418,6 +1413,41 @@ export function stepWorld(world, dtSec, inputs) {
   }
   world.coins = world.coins.filter((c) => !c.dead);
 
+  // --- энергетические сферы (экспа) — те же монеты, но дают energy ---
+  const EN = B.energy;
+  const enDamp = Math.exp(-EN.driftDamping * dt);
+  for (const s of world.energySpheres) {
+    s.vx *= enDamp;
+    s.vy *= enDamp;
+    // магнит: притяжение к ближайшему живому кораблю
+    let target = null;
+    let bestD = EN.magnetRadius;
+    for (const p of world.players) {
+      if (!p.alive || p.out) continue;
+      const d = Math.hypot(p.x - s.x, p.y - s.y);
+      if (d < bestD) { bestD = d; target = p; }
+    }
+    if (target) {
+      const d = Math.max(bestD, 1);
+      s.vx += ((target.x - s.x) / d) * EN.magnetPull * dt;
+      s.vy += ((target.y - s.y) / d) * EN.magnetPull * dt;
+    }
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.x = Math.max(EN.radius, Math.min(w - EN.radius, s.x));
+    s.y = Math.max(EN.radius, Math.min(h - EN.radius, s.y));
+
+    if (target && Math.hypot(target.x - s.x, target.y - s.y) < EN.pickupRadius) {
+      s.dead = true;
+      target.energy++;
+      target.exp++;
+      addFx(world, 'energy', s.x, s.y, 1);
+    } else if (now - s.born > EN.lifeMs) {
+      s.dead = true;
+    }
+  }
+  world.energySpheres = world.energySpheres.filter((s) => !s.dead);
+
   // --- powerups (щит/ускорение с комет/врагов) ---
   {
     const PU = B.powerups;
@@ -1456,6 +1486,7 @@ export function stepWorld(world, dtSec, inputs) {
   world.asteroids = world.asteroids.filter((a) => !a.dead);
   world.mines = world.mines.filter((m) => !m.dead);
   world.crystals = world.crystals.filter((c) => !c.dead);
+  world.energySpheres = world.energySpheres.filter((s) => !s.dead);
   world.lasers = world.lasers.filter((l) => !l.dead);
 
   // --- эффекты: удаляем старше 600 мс ---
@@ -1553,6 +1584,7 @@ export function snapshotOf(world) {
       o: p.out ? 1 : 0,
       l: p.lives,
       c: p.coins,
+      e: p.energy,
       s: p.score,
       k: p.kills,
       d: p.deaths,
@@ -1617,6 +1649,7 @@ export function snapshotOf(world) {
       a: Math.round(k.a * 100) / 100,
     })),
     cs: world.coins.map((c) => ({ i: c.id, x: Math.round(c.x), y: Math.round(c.y) })),
+    en: world.energySpheres.map((s) => ({ i: s.id, x: Math.round(s.x), y: Math.round(s.y) })),
     cw: world.pendingComets.map((pc) => ({
       i: pc.id,
       x: Math.round(pc.x),

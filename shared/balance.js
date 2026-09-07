@@ -27,18 +27,21 @@ export const BALANCE = {
       radiusMin: 13, radiusMax: 18,
       hp: 1, score: 10,
       coinsMin: 0, coinsMax: 1,
+      energyMin: 1, energyMax: 1,
       speedMin: 70, speedMax: 115,
     },
     medium: {
       radiusMin: 26, radiusMax: 34,
       hp: 5, score: 50,
       coinsMin: 2, coinsMax: 3,
+      energyMin: 1, energyMax: 2,
       speedMin: 45, speedMax: 80,
     },
     large: {
       radiusMin: 42, radiusMax: 52,
       hp: 10, score: 100,
       coinsMin: 4, coinsMax: 6,
+      energyMin: 2, energyMax: 3,
       speedMin: 25, speedMax: 55,
     },
     // раскалывание больших астероидов на меньшие; 0 = отключить
@@ -49,6 +52,7 @@ export const BALANCE = {
       radiusMin: 11, radiusMax: 15,
       hp: 2, score: 75,
       coinsMin: 1, coinsMax: 2,
+      energyMin: 1, energyMax: 2,
       speedMin: 540, speedMax: 840,
       spawnWarnMs: 900, // предупреждение (мигающая стрелка) до появления кометы
     },
@@ -71,6 +75,7 @@ export const BALANCE = {
     radius: 16,
     score: 150,
     coinsMin: 5, coinsMax: 8,
+    energyMin: 2, energyMax: 4,
     accel: 280,
     maxSpeed: 195,
     turnRate: 3.2,
@@ -90,6 +95,18 @@ export const BALANCE = {
     lifeMs: 12000,
     driftDamping: 1.6,  // затухание разлёта после выпадения
     scorePerCoin: 2,
+  },
+
+  // Энергетические сферы (матчевая экспа): ведут себя как монеты (магнит,
+  // подбор), но при подборе добавляют `energy` игроку, а не `coins`. Энергия
+  // накапливается как прогресс и не тратится (см. PLAN А2/А3).
+  energy: {
+    radius: 8,
+    magnetRadius: 64,   // сфера летит к ближайшему живому кораблю
+    magnetPull: 420,    // ускорение притяжения
+    pickupRadius: 24,
+    lifeMs: 12000,
+    driftDamping: 1.6,  // затухание разлёта после выпадения
   },
 
   upgrades: {

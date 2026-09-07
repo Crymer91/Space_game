@@ -102,7 +102,7 @@ export const api = {
   leaveRoom: () => ack({ event: 'room:leave' }),
   sendInput: (payload) => socket?.emit('game:input', payload),
   buyUpgrade: (track) => ack({ event: 'game:buy', data: { track } }),
-  submitSoloScore: (score) => ack({ event: 'solo:submit', data: { score } }),
+  submitSoloScore: (score, coins = 0) => ack({ event: 'solo:submit', data: { score, coins } }),
 };
 
 // удобный фасад для модулей игры

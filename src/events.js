@@ -157,7 +157,13 @@ export function registerHandlers(io, { db, config, roomManager, matchmaking, gam
       if (!Number.isFinite(score) || score < 0 || score > 1e7) {
         return fail(ack, 'invalid-score', 'score must be a number 0..10 000 000');
       }
-      const stats = submitScore(db, socket.data.player.playerId, Math.floor(score));
+      const coins = Number(payload.coins);
+      const coinsSafe = Number.isFinite(coins) && coins > 0
+        ? Math.min(Math.floor(coins), 1_000_000)
+        : 0;
+      const stats = submitScore(db, socket.data.player.playerId, Math.floor(score), {
+        mode: 'solo', coins: coinsSafe,
+      });
       if (typeof ack === 'function') ack({ ok: true, data: stats });
     }));
 

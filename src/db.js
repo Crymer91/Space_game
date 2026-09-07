@@ -40,10 +40,15 @@ export function upsertPlayer(db, playerId, nickname) {
   const now = Date.now();
   const p = db.data.players[playerId];
   if (!p) {
-    db.data.players[playerId] = { nickname, createdAt: now, lastSeenAt: now, bestScore: 0 };
+    db.data.players[playerId] = {
+      nickname, createdAt: now, lastSeenAt: now,
+      bestScore: 0, coinsSolo: 0, coinsMulti: 0,
+    };
   } else {
     p.nickname = nickname;
     p.lastSeenAt = now;
+    if (p.coinsSolo == null) p.coinsSolo = 0;
+    if (p.coinsMulti == null) p.coinsMulti = 0;
   }
   db.flush();
 }
@@ -56,16 +61,35 @@ export function getPlayerStats(db, playerId) {
     played++;
     if (mp.isWinner) wins++;
   }
-  return { played, wins, bestScore: db.data.players[playerId]?.bestScore ?? 0 };
+  const p = db.data.players[playerId];
+  return {
+    played, wins,
+    bestScore: p?.bestScore ?? 0,
+    coinsSolo: p?.coinsSolo ?? 0,
+    coinsMulti: p?.coinsMulti ?? 0,
+  };
+}
+
+export function addCoins(db, playerId, mode, amount) {
+  const p = db.data.players[playerId];
+  if (!p || !Number.isFinite(amount) || amount <= 0) return;
+  const key = mode === 'multi' ? 'coinsMulti' : 'coinsSolo';
+  p[key] = (p[key] || 0) + Math.floor(amount);
+  p.lastSeenAt = Date.now();
+  db.flush();
 }
 
 // Сохраняет рекорд одиночной игры (если побит) и возвращает обновлённую статистику
-export function submitScore(db, playerId, score) {
+export function submitScore(db, playerId, score, { mode = 'solo', coins = 0 } = {}) {
   const p = db.data.players[playerId];
   if (p) {
     p.bestScore = Math.max(p.bestScore || 0, score);
-    p.lastSeenAt = Date.now();
-    db.flush();
+    if (Number.isFinite(coins) && coins > 0) {
+      addCoins(db, playerId, mode, coins); // flush внутри
+    } else {
+      p.lastSeenAt = Date.now();
+      db.flush();
+    }
   }
   return getPlayerStats(db, playerId);
 }

@@ -125,6 +125,7 @@ renderer.onFx((f, state) => {
     case 'hit': tone({ type: 'triangle', from: 220, to: 160, dur: 0.04, vol: 0.07 * vol }); break;
     case 'boom': noiseBurst({ dur: 0.3 + f.z * 0.08, vol: 0.16 * Math.min(f.z, 2.5) * vol, cutoff: 500 + 300 / f.z }); break;
     case 'coin': tone({ type: 'sine', from: 880, to: 1420, dur: 0.09, vol: 0.09 * vol }); break;
+    case 'energy': tone({ type: 'sine', from: 720, to: 1180, dur: 0.1, vol: 0.08 * vol }); break;
     case 'spawn': tone({ type: 'sine', from: 280, to: 940, dur: 0.22, vol: 0.08 * vol }); break;
     case 'upgrade': tone({ type: 'sine', from: 620, to: 620, dur: 0.09, vol: 0.09 * vol }); tone({ type: 'sine', from: 930, to: 930, dur: 0.12, vol: 0.08 * vol }); break;
     case 'shield': tone({ type: 'sine', from: 400, to: 800, dur: 0.18, vol: 0.09 * vol }); break;
@@ -242,6 +243,7 @@ const BUY_ERRORS = {
   'max-level': 'Максимальный уровень',
   'match-over': 'Матч окончен',
   'not-found': 'Корабль уничтожен — покупка недоступна',
+  'store-disabled': 'Апгрейды приобретаются в Ангаре, а не в бою',
 };
 
 let hintTimer = null;
@@ -285,7 +287,10 @@ function startSolo() {
       onBuyResult,
       onOver: async (results) => {
         if (isConnected()) {
-          const res = await api.submitSoloScore(results.players[0]?.score || 0);
+          const res = await api.submitSoloScore(
+            results.players[0]?.score || 0,
+            results.players[0]?.coinsEarned || 0
+          );
           if (res.ok) updateRecordLine(res.data);
         }
         showOver(results, 'solo');

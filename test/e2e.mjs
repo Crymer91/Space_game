@@ -83,10 +83,12 @@ try {
   ok(sawEnemyFields, 'формат снапшота корректен');
 
   const buy = await emitAck(a, 'game:buy', { track: 'missiles' });
-  ok(buy?.error === 'not-enough-coins', 'покупка без монет отклоняется');
+  ok(buy?.error === 'store-disabled', 'покупка внутри матча отключена (монеты тратятся в Ангаре)');
 
-  const submit = await emitAck(a, 'solo:submit', { score: 1234 });
+  const submit = await emitAck(a, 'solo:submit', { score: 1234, coins: 7 });
   ok(submit?.ok && submit.data.bestScore >= 1234, 'рекорд сохраняется');
+  ok(submit.data.coinsSolo >= 7, 'монеты solo попадают в раздельный банк coinsSolo');
+  ok(submit.data.coinsMulti === 0, 'банк мультиплеера не смешивается с solo');
 
   a.disconnect();
   b.disconnect();

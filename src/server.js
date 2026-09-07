@@ -68,7 +68,7 @@ const io = new Server(httpServer, {
 const db = createDb(config.dbPath);
 const roomManager = new RoomManager({ io, db, config, logger });
 const matchmaking = new MatchmakingQueue({ io, roomManager, config, logger });
-const gameManager = new GameManager({ io, config, logger });
+const gameManager = new GameManager({ io, config, logger, db });
 
 // комната стартовала → поднимаем серверную симуляцию; закрылась → гасим сессию
 roomManager.events.on('room-started', (room) => gameManager.attach(room, roomManager));

@@ -20,6 +20,7 @@ const FX_COLORS = {
   boom: ['#ffd75e', '#ff9d4d', '#ff6b4a'],
   hit: ['#ffffff', '#ffe9a8'],
   coin: ['#ffd75e', '#fff3c0'],
+  energy: ['#7dff9e', '#c8ffd9'],
   shoot: ['#fff2b0'],
   spawn: ['#5ad0ff', '#bff1ff'],
   upgrade: ['#7dff9e', '#d2ffde'],
@@ -263,6 +264,27 @@ export function createRenderer(canvas) {
       ctx.beginPath();
       ctx.arc(c.x - 2.6, c.y - 2.6, 3.1 * pulse, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    // энергетические сферы (экспа) — зелёные, светятся
+    for (const sph of (s.en || [])) {
+      const pulse = 1 + 0.15 * Math.sin(now * 5 + sph.i);
+      ctx.save();
+      ctx.shadowColor = 'rgba(125,255,158,.8)';
+      ctx.shadowBlur = 14;
+      ctx.fillStyle = '#3ad66e';
+      ctx.strokeStyle = '#1a7a38';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(sph.x, sph.y, 8 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#c8ffd9';
+      ctx.beginPath();
+      ctx.arc(sph.x - 2, sph.y - 2.2, 2.6 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
 
     // powerups (щит/ускорение)
@@ -751,7 +773,7 @@ export function createRenderer(canvas) {
 
   function buildCard(el, p, color) {
     el.style.borderColor = color;
-    const key = p.i + '|' + p.n + '|' + p.s + '|' + p.l + '|' + p.c + '|' + p.o + '|' + Math.ceil((p.rs || 0) / 1000);
+    const key = p.i + '|' + p.n + '|' + p.s + '|' + p.l + '|' + p.c + '|' + p.e + '|' + p.o + '|' + Math.ceil((p.rs || 0) / 1000);
     if (hudCache[el.id] !== key) {
       hudCache[el.id] = key;
       const lives = p.o ? '✕' : '♥'.repeat(p.l) + '<span style="opacity:.25">' + '♥'.repeat(Math.max(0, BALANCE.ship.lives - p.l)) + '</span>';
@@ -760,6 +782,7 @@ export function createRenderer(canvas) {
         `<div class="ph-score">${p.s}</div>` +
         `<div class="ph-line"><span class="lives">${lives}</span>` +
         `<span class="coins-ico">● ${p.c}</span>` +
+        `<span class="energy-ico" title="Энергия (экспа)">✦ ${p.e}</span>` +
         (p.rs > 0 ? `<span style="color:#ffc24b">возрождение ${Math.ceil(p.rs / 1000)}…</span>` : '') +
         '</div>';
     }
@@ -772,38 +795,13 @@ export function createRenderer(canvas) {
   }
 
   function updateUpgrades(p) {
+    // A1: внутриматчевый магазин за монеты отключён — апгрейды берутся в Ангаре
     for (const btn of hudEls.upgBtns) {
-      const track = btn.dataset.track;
       const pipsEl = btn.querySelector('.pips');
       const costEl = btn.querySelector('.cost');
-      let pips;
-      let txt;
-      let disabled;
-      if (track === 'life') {
-        const def = BALANCE.upgrades.life;
-        const maxed = p.l >= def.maxLives;
-        pips = `${p.l}/${def.maxLives}`;
-        txt = maxed ? 'МАКС' : def.cost + ' мон.';
-        disabled = maxed || p.c < def.cost;
-      } else if (track === 'missiles') {
-        const def = BALANCE.upgrades.missiles;
-        const ammo = p.mk ?? 0;
-        const maxed = ammo >= def.maxAmmo;
-        pips = `×${ammo}`;
-        txt = maxed ? 'МАКС' : def.cost + ' мон.';
-        disabled = maxed || p.c < def.cost;
-      } else {
-        const def = BALANCE.upgrades[track];
-        const lvl = track === 'damage' ? p.dl : p.rl;
-        const max = def.costs.length;
-        const cost = def.costs[lvl];
-        pips = '●'.repeat(lvl) + '○'.repeat(max - lvl);
-        txt = cost == null ? 'МАКС' : cost + ' мон.';
-        disabled = cost == null || p.c < cost;
-      }
-      if (pipsEl.textContent !== pips) pipsEl.textContent = pips;
-      if (costEl.textContent !== txt) costEl.textContent = txt;
-      btn.disabled = disabled;
+      if (pipsEl && pipsEl.textContent !== '') pipsEl.textContent = '';
+      if (costEl && costEl.textContent !== 'Ангар') costEl.textContent = 'Ангар';
+      btn.disabled = true;
     }
   }
 

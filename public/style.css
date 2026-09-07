@@ -124,6 +124,7 @@ input:focus { outline: none; border-color: var(--accent); }
 .ph-line { color: var(--muted); font-size: 12.5px; display: flex; gap: 10px; align-items: center; }
 .lives { color: #ff6b73; letter-spacing: 2px; }
 .coins-ico { color: var(--gold); }
+.energy-ico { color: #7dff9e; }
 .hud-center { text-align: center; background: rgba(13, 16, 25, .78); border: 1px solid var(--border); border-radius: 12px; padding: 6px 18px; }
 #timerText { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
 #timerSub { color: var(--muted); font-size: 11.5px; }
