@@ -42,6 +42,8 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     wavePhase: 'spawning',
     waveTimer: 0,
     waveSpawns: {},
+    pendingComets: [],
+    nextPendingCometId: 1,
     nextAsteroidId: 1,
     nextBulletId: 1,
     nextCoinId: 1,
@@ -438,6 +440,34 @@ function edgePoint(world) {
   return { x: -m, y: rand(world.rng, 0, h) };
 }
 
+// Точка, в которой путь кометы (луч из точки at по вектору скорости)
+// впервые пересекает границу арены — там рисуем предупреждающую стрелку.
+function edgeEntryPoint(at, vx, vy) {
+  const w = B.world.width;
+  const h = B.world.height;
+  const cands = [];
+  if (vx !== 0) {
+    for (const X of [0, w]) {
+      const t = (X - at.x) / vx;
+      if (t >= 0) {
+        const y = at.y + t * vy;
+        if (y >= 0 && y <= h) cands.push({ t, x: X, y });
+      }
+    }
+  }
+  if (vy !== 0) {
+    for (const Y of [0, h]) {
+      const t = (Y - at.y) / vy;
+      if (t >= 0) {
+        const x = at.x + t * vx;
+        if (x >= 0 && x <= w) cands.push({ t, x, y: Y });
+      }
+    }
+  }
+  cands.sort((a, b) => a.t - b.t);
+  return cands.length ? cands[0] : { x: at.x, y: at.y };
+}
+
 function makeComet(world, x, y, vx, vy, r, rot) {
   const def = asteroidDef('comet');
   const ang = Math.atan2(vy, vx);
@@ -459,7 +489,7 @@ function makeComet(world, x, y, vx, vy, r, rot) {
 }
 
 // множественные кометы: 2-3 рядом летят параллельно, с боковым и продольным смещением
-function spawnMultipleComets(world, at, ang, sp) {
+function planMultipleComets(world, at, ang, sp, plan) {
   const def = asteroidDef('comet');
   const count = randInt(world.rng, 2, 3);
   const perp = ang + Math.PI / 2;
@@ -470,16 +500,18 @@ function spawnMultipleComets(world, at, ang, sp) {
   for (let k = 0; k < count; k++) {
     const lat = (k - (count - 1) / 2) * rand(world.rng, 20, 40);
     const lead = rand(world.rng, -40, 40); // вперёд/назад вдоль курса
-    makeComet(world,
-      at.x + Math.cos(perp) * lat + Math.cos(ang) * lead,
-      at.y + Math.sin(perp) * lat + Math.sin(ang) * lead,
-      vx, vy,
-      rand(world.rng, def.radiusMin, def.radiusMax));
+    plan.push({
+      x: at.x + Math.cos(perp) * lat + Math.cos(ang) * lead,
+      y: at.y + Math.sin(perp) * lat + Math.sin(ang) * lead,
+      vx,
+      vy,
+      r: rand(world.rng, def.radiusMin, def.radiusMax),
+    });
   }
 }
 
 // айсберг: 1 большая комета и за ней 1-3 маленьких
-function spawnIceberg(world, at, ang, sp) {
+function planIceberg(world, at, ang, sp, plan) {
   const def = asteroidDef('comet');
   const perp = ang + Math.PI / 2;
   const smallCount = randInt(world.rng, 1, 3);
@@ -489,15 +521,17 @@ function spawnIceberg(world, at, ang, sp) {
   const vx = Math.cos(ang) * baseSp;
   const vy = Math.sin(ang) * baseSp;
   const bigR = rand(world.rng, def.radiusMax + 6, def.radiusMax + 12);
-  makeComet(world, at.x, at.y, vx, vy, bigR);
+  plan.push({ x: at.x, y: at.y, vx, vy, r: bigR });
   for (let k = 0; k < smallCount; k++) {
     const trail = rand(world.rng, 26, 55) * (k + 1); // позади большой
     const lat = rand(world.rng, -26, 26);
-    makeComet(world,
-      at.x - Math.cos(ang) * trail + Math.cos(perp) * lat,
-      at.y - Math.sin(ang) * trail + Math.sin(perp) * lat,
-      vx, vy,
-      rand(world.rng, def.radiusMin * 0.7, def.radiusMin));
+    plan.push({
+      x: at.x - Math.cos(ang) * trail + Math.cos(perp) * lat,
+      y: at.y - Math.sin(ang) * trail + Math.sin(perp) * lat,
+      vx,
+      vy,
+      r: rand(world.rng, def.radiusMin * 0.7, def.radiusMin),
+    });
   }
 }
 
@@ -514,14 +548,30 @@ function spawnComet(world) {
   const vy = Math.sin(ang) * sp;
 
   // случайный вариант: одинарная / множественные / айсберг
+  const plan = [];
   const roll = world.rng();
   if (roll < 0.35) {
-    spawnMultipleComets(world, at, ang, sp);
+    planMultipleComets(world, at, ang, sp, plan); // 35% — группа 2-3
   } else if (roll < 0.6) {
-    spawnIceberg(world, at, ang, sp);
+    planIceberg(world, at, ang, sp, plan);        // 25% — айсберг (1 б + 1-3 м)
   } else {
-    makeComet(world, at.x, at.y, vx, vy, rand(world.rng, def.radiusMin, def.radiusMax));
+    plan.push({ x: at.x, y: at.y, vx, vy, r: rand(world.rng, def.radiusMin, def.radiusMax) }); // 40% — одинарная
   }
+
+  // отсроченный спавн: сначала предупреждающая стрелка на краю поля,
+  // сама комета появится через spawnWarnMs
+  const first = plan[0];
+  const entry = edgeEntryPoint({ x: first.x, y: first.y }, first.vx, first.vy);
+  world.pendingComets.push({
+    id: world.nextPendingCometId++,
+    at: world.t + def.spawnWarnMs,
+    x: entry.x,
+    y: entry.y,
+    vx: first.vx,
+    vy: first.vy,
+    r: first.r,
+    plan,
+  });
 }
 
 // --- вражеские корабли-охотники ---
@@ -566,7 +616,10 @@ const SPAWNERS = {
   },
   comet: {
     spawn(world) { spawnComet(world); },
-    countAlive(world) { return world.asteroids.reduce((n, a) => n + (a.type === 'comet' ? 1 : 0), 0); },
+    countAlive(world) {
+      return world.asteroids.reduce((n, a) => n + (a.type === 'comet' ? 1 : 0), 0) +
+        (world.pendingComets ? world.pendingComets.length : 0);
+    },
   },
   enemy: {
     spawn(world) { spawnEnemy(world); },
@@ -688,12 +741,18 @@ function spawnBoss(world, key) {
   if (!def) return;
   const w = B.world.width;
   const h = B.world.height;
-  const x = w/2 + rand(world.rng,-180,180);
-  const y = -80;
+  const margin = 100;
+  const side = Math.floor(world.rng() * 4);
+  let x, y;
+  if (side === 0) { x = rand(world.rng, 0, w); y = -margin; }
+  else if (side === 1) { x = w + margin; y = rand(world.rng, 0, h); }
+  else if (side === 2) { x = rand(world.rng, 0, w); y = h + margin; }
+  else { x = -margin; y = rand(world.rng, 0, h); }
+  const a = Math.atan2(h / 2 - y, w / 2 - x);
   world.bosses.push({
     id: 'bo'+ world.nextBossId++,
     key,
-    x, y, vx:0, vy:0, a: Math.PI/2,
+    x, y, vx:0, vy:0, a,
     hp: def.hp, maxHp: def.hp,
     fireCdAt: world.t + 900,
     mineCdAt: world.t + (def.mineIntervalMs||5000),
@@ -702,7 +761,9 @@ function spawnBoss(world, key) {
     world.bossSpawnedKeys[key] = true;
     world.bossesFought++;
   }
-  addFx(world,'warning', w/2, 90, 3, { k: key });
+  const warnX = side === 0 ? w / 2 : side === 2 ? w / 2 : side === 1 ? w - 40 : 40;
+  const warnY = side === 0 ? 40 : side === 2 ? h - 40 : h / 2;
+  addFx(world,'warning', warnX, warnY, 3, { k: key });
   addFx(world,'spawn', x, y, 3);
 }
 
@@ -797,8 +858,8 @@ function updateBosses(world, dt, now) {
     const damp=Math.exp(-1.8*dt); b.vx*=damp; b.vy*=damp;
     const sp=Math.hypot(b.vx,b.vy); if(sp>def.maxSpeed){ b.vx*=def.maxSpeed/sp; b.vy*=def.maxSpeed/sp; }
     b.x += b.vx*dt; b.y += b.vy*dt;
-    b.x=Math.max(def.radius, Math.min(w-def.radius,b.x));
-    b.y=Math.max(def.radius, Math.min(h-def.radius,b.y));
+    b.x=Math.max(-def.radius, Math.min(w+def.radius,b.x));
+    b.y=Math.max(-def.radius, Math.min(h+def.radius,b.y));
   }
   world.bosses = world.bosses.filter(b=>!b.dead);
 }
@@ -1137,6 +1198,15 @@ export function stepWorld(world, dtSec, inputs) {
     } else {
       a.x = wrap(a.x, w, a.r + 10);
       a.y = wrap(a.y, h, a.r + 10);
+    }
+  }
+
+  // --- отсроченные кометы: стрелка-предупреждение показана, теперь реальный спавн ---
+  for (let i = world.pendingComets.length - 1; i >= 0; i--) {
+    const pc = world.pendingComets[i];
+    if (now >= pc.at) {
+      for (const c of pc.plan) makeComet(world, c.x, c.y, c.vx, c.vy, c.r);
+      world.pendingComets.splice(i, 1);
     }
   }
 
@@ -1493,6 +1563,15 @@ export function snapshotOf(world) {
       a: Math.round(k.a * 100) / 100,
     })),
     cs: world.coins.map((c) => ({ i: c.id, x: Math.round(c.x), y: Math.round(c.y) })),
+    cw: world.pendingComets.map((pc) => ({
+      i: pc.id,
+      x: Math.round(pc.x),
+      y: Math.round(pc.y),
+      vx: Math.round(pc.vx),
+      vy: Math.round(pc.vy),
+      r: Math.round(pc.r),
+      t: Math.round(Math.max(0, pc.at - world.t)),
+    })),
     pu: world.powerups.map((u)=>({ i:u.id, tp:u.tp, x:Math.round(u.x), y:Math.round(u.y) })),
     bo: world.bosses.map((b)=>({ i:b.id, k:b.key, x:Math.round(b.x*10)/10, y:Math.round(b.y*10)/10, a:Math.round(b.a*100)/100, h:b.hp, hm:b.maxHp })),
     cr: world.crystals.map((c)=>({ i:c.id, x:Math.round(c.x), y:Math.round(c.y), k:c.kind, ab:c.ability||undefined })),

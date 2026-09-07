@@ -106,8 +106,8 @@ input:focus { outline: none; border-color: var(--accent); }
 }
 
 /* ===== Игровой экран ===== */
-#gameScreen { background: #05070c; }
-#gameCanvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
+#gameScreen { background: #05070c; cursor: none; }
+#gameCanvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: none; }
 
 #hud {
   position: absolute; top: 0; left: 0; right: 0;

@@ -7,6 +7,14 @@ const H = BALANCE.world.height;
 const SHIP_IMG = new Image();
 SHIP_IMG.src = '/img/player/ship.png';
 
+const BOSS_IMGS = {};
+BOSS_IMGS.dreadnought = new Image();
+BOSS_IMGS.dreadnought.src = '/img/enemies/dreadnought.png';
+BOSS_IMGS.phantom = new Image();
+BOSS_IMGS.phantom.src = '/img/enemies/phantom.png';
+BOSS_IMGS.leviathan = new Image();
+BOSS_IMGS.leviathan.src = '/img/enemies/leviathan.png';
+
 const SLOT_COLORS = ['#5ad0ff', '#ffb458', '#7dff9e', '#ff8ad8'];
 const FX_COLORS = {
   boom: ['#ffd75e', '#ff9d4d', '#ff6b4a'],
@@ -36,6 +44,13 @@ export function createRenderer(canvas) {
   let dpr = 1;
   let cssW = 0;
   let cssH = 0;
+  let mouseX = 0;
+  let mouseY = 0;
+  canvas.addEventListener('mousemove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    mouseX = e.clientX - r.left;
+    mouseY = e.clientY - r.top;
+  });
 
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -132,6 +147,8 @@ export function createRenderer(canvas) {
   }
 
   let onFxSound = null;
+  let onCometWarnCb = null;
+  const seenCometWarn = new Set();
   let lastTs = null;
   let current = null;
 
@@ -165,6 +182,38 @@ export function createRenderer(canvas) {
     ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, (view.ox + shx) * dpr, (view.oy + shy) * dpr);
 
     drawWorld(ctx, current, ts / 1000, dt);
+
+    // кастомный прицел — контрастный, с чёрной подложкой и свечением,
+    // чтобы не терялся на любом фоне (объекты, туманность, астероиды)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cx = mouseX;
+    const cy = mouseY;
+    const pl = 1 + 0.08 * Math.sin(ts * 0.006);
+    const sz = 10 * pl;
+    const arm = 3;
+    ctx.lineCap = 'round';
+    // 1) широкая тёмная подложка (контур), гарантирует контраст
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = 'rgba(0,0,0,0.78)';
+    ctx.beginPath(); ctx.moveTo(cx - sz, cy); ctx.lineTo(cx + sz, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy - sz); ctx.lineTo(cx, cy + sz); ctx.stroke();
+    // 2) белые линии поверх подложки (с разрывом в центре)
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = '#ffffff';
+    ctx.shadowColor = 'rgba(255,255,255,.85)';
+    ctx.shadowBlur = 6;
+    ctx.beginPath(); ctx.moveTo(cx - sz, cy); ctx.lineTo(cx - arm, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx + arm, cy); ctx.lineTo(cx + sz, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy - sz); ctx.lineTo(cx, cy - arm); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, cy + arm); ctx.lineTo(cx, cy + sz); ctx.stroke();
+    // 3) яркие уголки + центральная точка со свечением
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(cx, cy, 2.0, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath(); ctx.arc(cx, cy, 3.6, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.lineCap = 'butt';
   }
 
   function drawWorld(ctx, s, now, dt) {
@@ -314,6 +363,46 @@ export function createRenderer(canvas) {
         ctx.closePath(); ctx.fill(); ctx.stroke();
         ctx.restore();
       }
+    }
+
+    // предупреждение о кометах: мигающая стрелка у края арены
+    for (const cw of (s.cw || [])) {
+      if ((now % 0.3) >= 0.15) continue; // мигает несколько раз
+      const ang = Math.atan2(cw.vy, cw.vx);
+      const pulse = (now % 0.55) / 0.55;
+      // кольцо-импульс у точки входа
+      ctx.strokeStyle = 'rgba(140,205,255,' + (0.55 * (1 - pulse)).toFixed(3) + ')';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cw.x, cw.y, 10 + pulse * 26, 0, Math.PI * 2);
+      ctx.stroke();
+      // стрелка по направлению полёта (внутрь арены)
+      ctx.save();
+      ctx.translate(cw.x, cw.y);
+      ctx.rotate(ang);
+      ctx.fillStyle = 'rgba(207,232,255,.9)';
+      ctx.strokeStyle = '#6db3ff';
+      ctx.lineWidth = 2.2;
+      ctx.shadowColor = 'rgba(90,208,255,.95)';
+      ctx.shadowBlur = 16;
+      ctx.beginPath();
+      ctx.moveTo(26, 0);
+      ctx.lineTo(0, -12);
+      ctx.lineTo(9, 0);
+      ctx.lineTo(0, 12);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.moveTo(17, 0);
+      ctx.lineTo(6, -5);
+      ctx.lineTo(9.5, 0);
+      ctx.lineTo(6, 5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
     }
 
     // пули (вражеские — красные)
@@ -477,41 +566,61 @@ export function createRenderer(canvas) {
     for (const b of (s.bo || [])) {
       const def = BALANCE.bosses.types[b.k];
       const r = def ? def.radius : 50;
-      ctx.save();
-      ctx.translate(b.x, b.y);
-      ctx.rotate(b.a);
       const col = b.k==='dreadnought' ? '#ff9d4d' : b.k==='phantom' ? '#9d7dff' : '#4dffc8';
-      const pulse = 1 + 0.06*Math.sin(now*3 + b.i);
-      ctx.scale(pulse, pulse);
-      // корпус
-      ctx.fillStyle = '#0f131c';
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      if(b.k==='leviathan'){
-        // круглый
-        ctx.arc(0,0,r,0,Math.PI*2);
-        ctx.fill(); ctx.stroke();
-        ctx.fillStyle=col; ctx.beginPath(); ctx.arc(0,0,8,0,Math.PI*2); ctx.fill();
-        for(let k=0;k<6;k++){ const ang=k*Math.PI/3; ctx.fillStyle='#1a2333'; ctx.beginPath(); ctx.arc(Math.cos(ang)*(r-14), Math.sin(ang)*(r-14), 7,0,Math.PI*2); ctx.fill(); ctx.strokeStyle=col; ctx.lineWidth=1.2; ctx.stroke(); }
-      } else if(b.k==='phantom'){
-        ctx.moveTo(26,0); ctx.lineTo(-18,-22); ctx.lineTo(-10,0); ctx.lineTo(-18,22); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.fillStyle=col; ctx.beginPath(); ctx.arc(4,0,6,0,Math.PI*2); ctx.fill();
+      const inside = b.x + r > 0 && b.x - r < W && b.y + r > 0 && b.y - r < H;
+      if (inside) {
+        ctx.save();
+        ctx.translate(b.x, b.y);
+        ctx.rotate(b.a);
+        const pulse = 1 + 0.06*Math.sin(now*3 + b.i);
+        ctx.scale(pulse, pulse);
+        ctx.fillStyle = '#0f131c';
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        const img = BOSS_IMGS[b.k];
+        if (img && img.complete && img.naturalWidth > 0) {
+          const size = r * 3;
+          ctx.save();
+          ctx.rotate(Math.PI / 2);
+          ctx.drawImage(img, -size / 2, -size / 2, size, size);
+          ctx.restore();
+        } else {
+          ctx.fillRect(-r*0.9, -r*0.65, r*1.8, r*1.3);
+          ctx.strokeRect(-r*0.9, -r*0.65, r*1.8, r*1.3);
+          ctx.fillStyle='#1e2a3a'; ctx.fillRect(-r*0.6, -r*0.3, r*1.2, r*0.6);
+          ctx.fillStyle=col; ctx.fillRect(r*0.35, -6, 18,12);
+        }
+        ctx.restore();
+        const bw = 74;
+        ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(b.x-bw/2, b.y - r -18, bw, 7);
+        ctx.fillStyle = b.h/b.hm <0.3 ? '#ff4d4d' : col;
+        ctx.fillRect(b.x-bw/2, b.y - r -18, bw*Math.max(0,b.h/b.hm),7);
+        ctx.fillStyle='#fff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+        ctx.fillText((def?def.name:b.k).toUpperCase(), b.x, b.y - r -24);
       } else {
-        // dreadnought прямоугольный
-        ctx.fillRect(-r*0.9, -r*0.65, r*1.8, r*1.3);
-        ctx.strokeRect(-r*0.9, -r*0.65, r*1.8, r*1.3);
-        ctx.fillStyle='#1e2a3a'; ctx.fillRect(-r*0.6, -r*0.3, r*1.2, r*0.6);
-        ctx.fillStyle=col; ctx.fillRect(r*0.35, -6, 18,12);
+        const cx = Math.max(r, Math.min(W - r, b.x));
+        const cy = Math.max(r, Math.min(H - r, b.y));
+        const ang = Math.atan2(b.y - cy, b.x - cx);
+        const tx = cx + Math.cos(ang) * 28;
+        const ty = cy + Math.sin(ang) * 28;
+        ctx.save();
+        ctx.translate(tx, ty);
+        ctx.rotate(ang);
+        ctx.fillStyle = '#ff4d4d';
+        ctx.beginPath();
+        ctx.moveTo(14, 0);
+        ctx.lineTo(-6, -8);
+        ctx.lineTo(-6, 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.restore();
+        ctx.fillStyle='#ff4d4d'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+        ctx.fillText((def?def.name:b.k).toUpperCase(), tx, ty - 12);
       }
-      ctx.restore();
-      // HP бар
-      const bw = 74;
-      ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(b.x-bw/2, b.y - r -18, bw, 7);
-      ctx.fillStyle = b.h/b.hm <0.3 ? '#ff4d4d' : col;
-      ctx.fillRect(b.x-bw/2, b.y - r -18, bw*Math.max(0,b.h/b.hm),7);
-      ctx.fillStyle='#fff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
-      ctx.fillText((def?def.name:b.k).toUpperCase(), b.x, b.y - r -24);
     }
 
     // корабли
@@ -705,6 +814,19 @@ export function createRenderer(canvas) {
     setState(s) {
       // новые эффекты → частицы/звук
       if (s.fx) for (const f of s.fx) spawnFxParticles(f);
+      // новые предупреждения о кометах → звук/напоминание
+      if (s.cw) {
+        for (const cw of s.cw) {
+          if (seenCometWarn.has(cw.i)) continue;
+          seenCometWarn.add(cw.i);
+          if (seenCometWarn.size > 400) {
+            const arr = [...seenCometWarn].slice(-200);
+            seenCometWarn.clear();
+            arr.forEach((v) => seenCometWarn.add(v));
+          }
+          if (onCometWarnCb) onCometWarnCb(cw, current);
+        }
+      }
       current = s;
     },
 
@@ -758,5 +880,6 @@ export function createRenderer(canvas) {
     },
 
     onFx(fn) { onFxSound = fn; },
+    onCometWarn(fn) { onCometWarnCb = fn; },
   };
 }

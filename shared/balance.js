@@ -50,6 +50,7 @@ export const BALANCE = {
       hp: 2, score: 75,
       coinsMin: 1, coinsMax: 2,
       speedMin: 540, speedMax: 840,
+      spawnWarnMs: 900, // предупреждение (мигающая стрелка) до появления кометы
     },
   },
 

@@ -16,6 +16,7 @@ const els = {
   waitCode: $('waitCode'),
   waitCancelBtn: $('waitCancelBtn'),
   overOverlay: $('overOverlay'),
+  overImage: $('overImage'),
   overTitle: $('overTitle'),
   overReason: $('overReason'),
   overRows: $('overRows'),
@@ -131,6 +132,9 @@ renderer.onFx((f, state) => {
     case 'mine': tone({ type: 'triangle', from: 180, to: 90, dur: 0.15, vol: 0.08*vol }); break;
   }
 });
+renderer.onCometWarn(() => {
+  tone({ type: 'triangle', from: 1250, to: 950, dur: 0.1, vol: 0.07 });
+});
 document.addEventListener('pointerdown', ensureAudio, { once: true });
 
 // ===================== ЭКРАНЫ =====================
@@ -176,6 +180,20 @@ function showOver(results, mode) {
   overShown = true;
   input.setActive(false);
   const players = [...(results.players || [])].sort((a, b) => b.score - a.score);
+  const won = results.winner != null && results.winner === selfId;
+  if (mode === 'solo') {
+    els.overImage.src = '/img/player/loose.webp';
+    els.overImage.alt = 'Поражение';
+    els.overImage.classList.remove('hidden');
+  } else if (results.winner == null) {
+    els.overImage.src = '/img/player/draw.webp';
+    els.overImage.alt = 'Ничья';
+    els.overImage.classList.remove('hidden');
+  } else {
+    els.overImage.src = won ? '/img/player/win.webp' : '/img/player/loose.webp';
+    els.overImage.alt = won ? 'Победа' : 'Поражение';
+    els.overImage.classList.remove('hidden');
+  }
   els.overTitle.textContent =
     results.reason === 'time-up' ? 'Время вышло!' :
     results.winner ? 'Есть победитель!' : 'Ничья!';
