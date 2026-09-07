@@ -427,6 +427,51 @@ function wrap(v, max, margin) {
   return v;
 }
 
+// --- спавн в свободных квадрантах (враги и боссы не появляются в секторе игрока) ---
+
+// Квадрант точки: 0=слева-сверху, 1=справа-сверху, 2=слева-снизу, 3=справа-снизу
+function quadrantOf(x, y) {
+  const hw = B.world.width / 2;
+  const hh = B.world.height / 2;
+  return (x < hw ? 0 : 1) | (y < hh ? 0 : 2);
+}
+
+// Квадранты всех живых кораблей (в мультиплеере — обоих игроков)
+function occupiedQuadrants(world) {
+  const occ = new Set();
+  for (const p of world.players) {
+    if (p.out) continue;
+    occ.add(quadrantOf(p.x, p.y));
+  }
+  return occ;
+}
+
+// Ребро-точка на кромке заданного квадранта (вне границы арены)
+function edgePointOfQuadrant(world, q, margin) {
+  const w = B.world.width;
+  const h = B.world.height;
+  const hw = w / 2;
+  const hh = h / 2;
+  const left = q === 0 || q === 2;
+  const top = q === 0 || q === 1;
+  // выбираем сторону, выходящую за границу именно в этом квадранте
+  const sides = [];
+  if (top) sides.push(() => ({ x: rand(world.rng, 0, hw), y: -margin }));
+  else sides.push(() => ({ x: rand(world.rng, 0, hw), y: h + margin }));
+  if (left) sides.push(() => ({ x: -margin, y: rand(world.rng, 0, hh) }));
+  else sides.push(() => ({ x: w + margin, y: rand(world.rng, 0, hh) }));
+  return sides[randInt(world.rng, 0, sides.length - 1)]();
+}
+
+// Случайное ребро из свободных квадрантов; если все заняты — где угодно
+function safeSpawnEdge(world, margin = 60) {
+  const occ = occupiedQuadrants(world);
+  const free = [];
+  for (let q = 0; q < 4; q++) if (!occ.has(q)) free.push(q);
+  const pool = free.length ? free : [0, 1, 2, 3];
+  return edgePointOfQuadrant(world, pool[randInt(world.rng, 0, pool.length - 1)], margin);
+}
+
 // --- кометы: быстрые «снаряды», летящие насквозь ---
 
 function edgePoint(world) {
@@ -583,7 +628,7 @@ function spawnEnemy(world) {
   let x = w / 2;
   let y = -60;
   for (let attempt = 0; attempt < 10; attempt++) {
-    const at = edgePoint(world);
+    const at = safeSpawnEdge(world, 60);
     x = at.x;
     y = at.y;
     const tooClose = world.players.some(
@@ -742,7 +787,16 @@ function spawnBoss(world, key) {
   const w = B.world.width;
   const h = B.world.height;
   const margin = 100;
-  const side = Math.floor(world.rng() * 4);
+  // определяем занятые квадранты игроками и выбираем свободную сторону
+  const occ = occupiedQuadrants(world);
+  const freeSides = [];
+  if (!occ.has(0) && !occ.has(1)) freeSides.push(0); // сверху свободно
+  if (!occ.has(1) && !occ.has(3)) freeSides.push(1); // справа свободно
+  if (!occ.has(2) && !occ.has(3)) freeSides.push(2); // снизу свободно
+  if (!occ.has(0) && !occ.has(2)) freeSides.push(3); // слева свободно
+  const side = freeSides.length
+    ? freeSides[Math.floor(world.rng() * freeSides.length)]
+    : Math.floor(world.rng() * 4);
   let x, y;
   if (side === 0) { x = rand(world.rng, 0, w); y = -margin; }
   else if (side === 1) { x = w + margin; y = rand(world.rng, 0, h); }
