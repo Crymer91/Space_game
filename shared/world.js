@@ -31,6 +31,18 @@ function lerp(a, b, t) {
 
 const EMPTY_INPUT = Object.freeze({ mx: 0, my: 0, aim: undefined, shoot: false, mis:false, laser:false, mine:false });
 
+// Кэш собранных характеристик врага по виду. База — B.enemies (обычный охотник),
+// вид из enemyKinds переопределяет поля (hp, радиус, поведение, дроп и т.д.).
+const ENEMY_STATS_CACHE = {};
+
+// Статистика врага. kind 'enemy' → чистые B.enemies; остальные → слияние поверх.
+function enemyStats(kind) {
+  const kd = (kind && B.enemyKinds[kind]) || null;
+  if (!kd) return B.enemies;
+  if (!ENEMY_STATS_CACHE[kind]) ENEMY_STATS_CACHE[kind] = Object.assign({}, B.enemies, kd);
+  return ENEMY_STATS_CACHE[kind];
+}
+
 // Характеристики модуля для конкретного уровня. Для ракет: макс.боезапас,
 // урон взрыва и шанс дропа растут с каждым уровнем (BALANCE.upgrades.modules).
 export function moduleStats(key, level) {
@@ -815,10 +827,11 @@ function spawnComet(world) {
   });
 }
 
-// --- вражеские корабли-охотники ---
+// --- вражеские корабли: охотник (enemy), бронированный (armored),
+// очередной стрелок (burst), орбитальный (orbital) ---
 
-function spawnEnemy(world) {
-  const E = B.enemies;
+function spawnEnemyOfKind(world, kind) {
+  const st = enemyStats(kind);
   const w = B.world.width;
   const h = B.world.height;
   let x = w / 2;
@@ -832,18 +845,38 @@ function spawnEnemy(world) {
     );
     if (!tooClose) break;
   }
-  world.enemies.push({
+  const e = {
     id: 'en' + world.nextEnemyId++,
+    kind,
     x,
     y,
     vx: 0,
     vy: 0,
     a: Math.atan2(h / 2 - y, w / 2 - x),
-    hp: E.hp,
-    maxHp: E.hp,
+    r: st.radius,
+    hp: st.hp,
+    maxHp: st.hp,
     fireCdAt: world.t + 1200,
     strafe: world.rng() < 0.5 ? 1 : -1,
-  });
+  };
+  if (kind === 'armored') {
+    e.armor = st.armorHp;
+    e.maxArmor = st.armorHp;
+  } else if (kind === 'burst') {
+    e.burstLeft = 0;          // пуль осталось в текущей очереди
+    e.burstNextAt = 0;        // таймер следующей пули очереди
+    e.burstCdUntil = world.t + 800; // пауза между очередями
+    e.powLvl = 0;             // усиление подобранными монетами
+  } else if (kind === 'orbital') {
+    e.orbA = world.rng() * Math.PI * 2; // текущий угол орбиты
+    e.orbDir = world.rng() < 0.5 ? 1 : -1; // направление облёта
+    e.orbitR = rand(world.rng, st.orbitRMin, st.orbitRMax);
+  }
+  world.enemies.push(e);
+}
+
+function spawnEnemy(world) {
+  spawnEnemyOfKind(world, 'enemy');
 }
 
 // Реестр видов противников, спавнящихся в волнах. Ключ должен совпадать с ключом
@@ -866,16 +899,29 @@ const SPAWNERS = {
     spawn(world) { spawnEnemy(world); },
     countAlive(world) { return world.enemies.length; },
   },
+  armored: {
+    spawn(world) { spawnEnemyOfKind(world, 'armored'); },
+    countAlive(world) { return world.enemies.reduce((n, e) => n + (e.kind === 'armored' ? 1 : 0), 0); },
+  },
+  burst: {
+    spawn(world) { spawnEnemyOfKind(world, 'burst'); },
+    countAlive(world) { return world.enemies.reduce((n, e) => n + (e.kind === 'burst' ? 1 : 0), 0); },
+  },
+  orbital: {
+    spawn(world) { spawnEnemyOfKind(world, 'orbital'); },
+    countAlive(world) { return world.enemies.reduce((n, e) => n + (e.kind === 'orbital' ? 1 : 0), 0); },
+  },
 };
 
 export function killEnemy(world, e, owner) {
   e.dead = true;
+  const st = enemyStats(e.kind);
   if (owner) {
-    owner.score += B.enemies.score;
+    owner.score += st.score;
     owner.kills++;
   }
-  spawnCoinBurst(world, e.x, e.y, randInt(world.rng, B.enemies.coinsMin, B.enemies.coinsMax));
-  const eEnergy = randInt(world.rng, B.enemies.energyMin, B.enemies.energyMax);
+  spawnCoinBurst(world, e.x, e.y, randInt(world.rng, st.coinsMin, st.coinsMax));
+  const eEnergy = randInt(world.rng, st.energyMin, st.energyMax);
   if (eEnergy > 0) spawnEnergyBurst(world, e.x, e.y, eEnergy);
   // патроны для ракет: только когда у убившего активен модуль (Б1) и боезапас не полон.
   // Шанс дропа и потолок боезапаса зависят от уровня модуля.
@@ -895,11 +941,86 @@ export function killEnemy(world, e, owner) {
   addFx(world, 'boom', e.x, e.y, 2.6);
 }
 
+// Урон по врагу: бронированный (В4) сначала тратит броню (+100% HP), затем HP.
+function damageEnemy(world, e, dmg, owner) {
+  if (e.dead || dmg <= 0) return;
+  if (e.kind === 'armored' && e.armor > 0) {
+    const abs = Math.min(e.armor, dmg);
+    e.armor -= abs;
+    dmg -= abs;
+    if (e.armor <= 0) {
+      addFx(world, 'boom', e.x, e.y, 1.2);
+    }
+  }
+  if (dmg > 0) e.hp -= dmg;
+  if (e.hp <= 0) killEnemy(world, e, owner);
+  else addFx(world, 'hit', e.x, e.y, 1);
+}
+
+// Ближайшая монета в радиусе (для врагов-сборщиков монет, В4)
+function nearestCoin(world, e, radius) {
+  let best = null;
+  let bd = radius;
+  for (const c of world.coins) {
+    const d = Math.hypot(c.x - e.x, c.y - e.y);
+    if (d <= bd) { bd = d; best = c; }
+  }
+  return best;
+}
+
+// Выстрел вражеского корабля по текущему направлению.
+function enemyFireBullet(world, e, st, now) {
+  const nose = e.r + 6;
+  world.bullets.push({
+    id: world.nextBulletId++,
+    x: e.x + Math.cos(e.a) * nose,
+    y: e.y + Math.sin(e.a) * nose,
+    vx: Math.cos(e.a) * st.bulletSpeed,
+    vy: Math.sin(e.a) * st.bulletSpeed,
+    a: e.a,
+    owner: null,
+    enemy: true,
+    born: world.t,
+  });
+  addFx(world, 'shoot', e.x + Math.cos(e.a) * nose, e.y + Math.sin(e.a) * nose, 1);
+}
+
+// Стрельба по виду врага: очередной стрелок (В4) — очередь по 0.1с с паузой 2с,
+// обычные/бронированные — одиночные выстрелы; орбитальный не стреляет.
+function maybeFireEnemy(world, e, st, now) {
+  if (e.kind === 'orbital') return;
+  if (e.kind === 'burst') {
+    const shots = st.burstShots + e.powLvl; // монета → +выстрел в очереди
+    const speed = st.bulletSpeed * (1 + e.powLvl * st.powSpeed);
+    if (e.burstLeft > 0) {
+      if (now >= e.burstNextAt) {
+        const old = st.bulletSpeed;
+        st.bulletSpeed = speed;
+        enemyFireBullet(world, e, st, now);
+        st.bulletSpeed = old;
+        e.burstLeft--;
+        if (e.burstLeft > 0) e.burstNextAt = now + st.shotIntervalMs;
+        else e.burstCdUntil = now + st.burstCooldownMs;
+      }
+      return;
+    }
+    if (now >= e.burstCdUntil) {
+      e.burstLeft = shots;
+      e.burstNextAt = now;
+    }
+    return;
+  }
+  if (now >= e.fireCdAt) {
+    e.fireCdAt = now + st.fireCooldownMs * rand(world.rng, 0.75, 1.3);
+    enemyFireBullet(world, e, st, now);
+  }
+}
+
 function updateEnemies(world, dt, now) {
-  const E = B.enemies;
   const w = B.world.width;
   const h = B.world.height;
   for (const e of world.enemies) {
+    const st = enemyStats(e.kind);
     // цель — ближайший живой игрок
     let target = null;
     let bd = Infinity;
@@ -910,75 +1031,116 @@ function updateEnemies(world, dt, now) {
     }
     let ax = 0;
     let ay = 0;
-    if (target && bd < E.engageDistMax * 1.6) {
-      const nx = (target.x - e.x) / (bd || 1);
-      const ny = (target.y - e.y) / (bd || 1);
-      if (bd > E.preferredDistMax) { ax = nx; ay = ny; }
-      else if (bd < E.preferredDistMin) { ax = -nx; ay = -ny; }
-      else { ax = -ny * e.strafe; ay = nx * e.strafe; }
 
-      // прицел с опережением по скорости цели
-      const lead = bd / E.bulletSpeed;
-      const want = Math.atan2(
-        target.y + target.vy * lead - e.y,
-        target.x + target.vx * lead - e.x
-      );
-      let da = (want - e.a) % (Math.PI * 2);
-      if (da > Math.PI) da -= Math.PI * 2;
-      if (da < -Math.PI) da += Math.PI * 2;
-      const turn = E.turnRate * dt;
-      e.a += Math.max(-turn, Math.min(turn, da));
+    if (e.kind === 'orbital') {
+      // --- орбитальный: кружит вокруг цели на дистанции, не стреляет ---
+      if (target) {
+        const angToT = Math.atan2(target.y - e.y, target.x - e.x);
+        const dist = Math.hypot(target.x - e.x, target.y - e.y) || 1;
+        // радиальная составляющая: держим радиус орбиты
+        const drift = Math.max(-1.6, Math.min(1.6, (dist - e.orbitR) / 130));
+        ax += Math.cos(angToT) * drift;
+        ay += Math.sin(angToT) * drift;
+        // тангенциальная составляющая: облёт по орбите
+        const tan = angToT + (Math.PI / 2) * e.orbDir;
+        ax += Math.cos(tan) * 1.5;
+        ay += Math.sin(tan) * 1.5;
+        // разворачиваемся «носом» к игроку (угроза тарана)
+        const want = angToT;
+        let da = (want - e.a) % (Math.PI * 2);
+        if (da > Math.PI) da -= Math.PI * 2;
+        if (da < -Math.PI) da += Math.PI * 2;
+        const turn = st.turnRate * dt;
+        e.a += Math.max(-turn, Math.min(turn, da));
+      }
+    } else {
+      // --- охотник / бронированный / очередной стрелок: погоня с огнём ---
+      let preferMin = st.preferredDistMin;
+      let preferMax = st.preferredDistMax;
+      let shoot = true;
+      let coin = null;
+      if (e.kind === 'armored') {
+        const armorPct = e.maxArmor ? e.armor / e.maxArmor : 0;
+        if (armorPct < st.armorResupplyPct) {
+          // броня критична: прекращаем огонь и уходим за монетой
+          shoot = false;
+          coin = nearestCoin(world, e, st.coinSeekR);
+          if (!coin) {
+            preferMin = st.preferredDistMax * 1.7;
+            preferMax = st.preferredDistMax * 2.0;
+          }
+        } else if (armorPct < st.armorResupplyPct + 0.2) {
+          // броня подорвана: держимся на дальних дистанциях
+          preferMin *= 1.3;
+          preferMax *= 1.4;
+        }
+      }
+      const steer = coin || target;
+      if (steer && bd < st.engageDistMax * 1.6) {
+        const nx = (steer.x - e.x) / (bd || 1);
+        const ny = (steer.y - e.y) / (bd || 1);
+        if (coin) {
+          ax += nx;
+          ay += ny;
+        } else if (bd > preferMax) { ax = nx; ay = ny; }
+        else if (bd < preferMin) { ax = -nx; ay = -ny; }
+        else { ax = -ny * e.strafe; ay = nx * e.strafe; }
 
-      if (Math.abs(da) < 0.18 && now >= e.fireCdAt && bd < E.engageDistMax) {
-        e.fireCdAt = now + E.fireCooldownMs * rand(world.rng, 0.75, 1.3);
-        const nose = E.radius + 6;
-        world.bullets.push({
-          id: world.nextBulletId++,
-          x: e.x + Math.cos(e.a) * nose,
-          y: e.y + Math.sin(e.a) * nose,
-          vx: Math.cos(e.a) * E.bulletSpeed,
-          vy: Math.sin(e.a) * E.bulletSpeed,
-          a: e.a,
-          owner: null,
-          enemy: true,
-          born: world.t,
-        });
-        addFx(world, 'shoot', e.x + Math.cos(e.a) * nose, e.y + Math.sin(e.a) * nose, 1);
+        if (shoot) {
+          // прицел с опережением по скорости цели
+          const lead = bd / st.bulletSpeed;
+          const want = Math.atan2(
+            target.y + target.vy * lead - e.y,
+            target.x + target.vx * lead - e.x
+          );
+          let da = (want - e.a) % (Math.PI * 2);
+          if (da > Math.PI) da -= Math.PI * 2;
+          if (da < -Math.PI) da += Math.PI * 2;
+          const turn = st.turnRate * dt;
+          e.a += Math.max(-turn, Math.min(turn, da));
+
+          if (Math.abs(da) < 0.18 && bd < st.engageDistMax && target) {
+            maybeFireEnemy(world, e, st, now);
+          }
+        }
       }
     }
-    // --- уворот от астероидов и комет ---
-    let keepTarget = true;
-    let dodgeX = 0;
-    let dodgeY = 0;
-    const lookAhead = E.maxSpeed * 0.5 + 40; // смотрим вперёд по ходу движения
-    for (const a of world.asteroids) {
-      if (a.dead) continue;
-      const dx = a.x - e.x;
-      const dy = a.y - e.y;
-      const dist = Math.hypot(dx, dy);
-      const danger = a.r + E.radius + lookAhead;
-      if (dist < danger && dist > 0.001) {
-        // уворачиваемся перпендикулярно направлению на астероид
-        const push = (1 - dist / danger) * 1.6;
-        dodgeX -= (dx / dist) * push;
-        dodgeY -= (dy / dist) * push;
-        if (dist < a.r + E.radius + 30) keepTarget = false;
+
+    // --- уворот от астероидов и комет (орбитальный их ломает, а не уворачивается) ---
+    if (e.kind !== 'orbital') {
+      let keepTarget = true;
+      let dodgeX = 0;
+      let dodgeY = 0;
+      const lookAhead = st.maxSpeed * 0.5 + 40; // смотрим вперёд по ходу движения
+      for (const a of world.asteroids) {
+        if (a.dead) continue;
+        const dx = a.x - e.x;
+        const dy = a.y - e.y;
+        const dist = Math.hypot(dx, dy);
+        const danger = a.r + e.r + lookAhead;
+        if (dist < danger && dist > 0.001) {
+          // уворачиваемся перпендикулярно направлению на астероид
+          const push = (1 - dist / danger) * 1.6;
+          dodgeX -= (dx / dist) * push;
+          dodgeY -= (dy / dist) * push;
+          if (dist < a.r + e.r + 30) keepTarget = false;
+        }
+      }
+      if (dodgeX !== 0 || dodgeY !== 0) {
+        ax += dodgeX;
+        ay += dodgeY;
+      } else if (!keepTarget) {
+        ax = 0; ay = 0;
       }
     }
-    if (dodgeX !== 0 || dodgeY !== 0) {
-      ax += dodgeX;
-      ay += dodgeY;
-    } else if (!keepTarget) {
-      ax = 0; ay = 0;
-    }
 
-    e.vx += ax * E.accel * dt;
-    e.vy += ay * E.accel * dt;
+    e.vx += ax * st.accel * dt;
+    e.vy += ay * st.accel * dt;
     const damp = Math.exp(-2 * dt);
     e.vx *= damp;
     e.vy *= damp;
     const sp = Math.hypot(e.vx, e.vy);
-    if (sp > E.maxSpeed) { e.vx *= E.maxSpeed / sp; e.vy *= E.maxSpeed / sp; }
+    if (sp > st.maxSpeed) { e.vx *= st.maxSpeed / sp; e.vy *= st.maxSpeed / sp; }
     e.x += e.vx * dt;
     e.y += e.vy * dt;
     // не даём врагу улететь далеко за поле
@@ -1203,7 +1365,7 @@ function detonateMine(world, mine, owner){
     }
   }
   for(const a of hitAsteroids){ a.hp -= M.blastDamage; if(a.hp<=0) destroyAsteroid(world,a,owner); else addFx(world,'hit',a.x,a.y,1); }
-  for(const e of hitEnemies){ e.hp -= M.blastDamage; if(e.hp<=0) killEnemy(world,e,owner); }
+  for(const e of hitEnemies){ damageEnemy(world, e, M.blastDamage, owner); }
   for(const b of hitBosses){ b.hp -= M.blastDamage; if(b.hp<=0) destroyBoss(world,b,owner); }
 }
 
@@ -1242,7 +1404,7 @@ function updateLasers(world, dt, now){
     const wHalf = B.abilities.laser.width;
     const checkLine=(x1,y1,x2a,y2a)=>{
       for(const a of world.asteroids){ if(a.dead) continue; if(pointToSegDist(a.x,a.y,x1,y1,x2a,y2a) <= a.r + wHalf){ a.hp -= B.abilities.laser.dps * (B.abilities.laser.tickMs/1000); if(a.hp<=0) destroyAsteroid(world,a,ownerP); }}
-      for(const e of world.enemies){ if(e.dead) continue; if(pointToSegDist(e.x,e.y,x1,y1,x2a,y2a) <= B.enemies.radius + wHalf){ e.hp -= B.abilities.laser.dps * (B.abilities.laser.tickMs/1000); if(e.hp<=0) killEnemy(world,e,ownerP); }}
+      for(const e of world.enemies){ if(e.dead) continue; if(pointToSegDist(e.x,e.y,x1,y1,x2a,y2a) <= (e.r||B.enemies.radius) + wHalf){ damageEnemy(world, e, B.abilities.laser.dps * (B.abilities.laser.tickMs/1000), ownerP); }}
       for(const b of world.bosses){ if(b.dead) continue; const r=B.bosses.types[b.key].radius; if(pointToSegDist(b.x,b.y,x1,y1,x2a,y2a) <= r + wHalf){ b.hp -= B.abilities.laser.dps * (B.abilities.laser.tickMs/1000); if(b.hp<=0) destroyBoss(world,b,ownerP); }}
     };
     checkLine(p.x,p.y,x2,y2);
@@ -1303,8 +1465,7 @@ function detonateMissile(world, k, small = false) {
   for (const en of world.enemies) {
     if (en.dead) continue;
     if (Math.hypot(en.x - k.x, en.y - k.y) <= R) {
-      en.hp -= dmg;
-      if (en.hp <= 0) killEnemy(world, en, owner);
+      damageEnemy(world, en, dmg, owner);
     }
   }
   for (const boss of world.bosses) {
@@ -1509,13 +1670,12 @@ export function stepWorld(world, dtSec, inputs) {
       if (e.dead) continue;
       const dx = e.x - b.x;
       const dy = e.y - b.y;
-      const rr = B.enemies.radius + B.bullet.radius;
+      const rr = (e.r || B.enemies.radius) + B.bullet.radius;
       if (dx * dx + dy * dy <= rr * rr) {
         const owner = world.players.find((p) => p.id === b.owner) || null;
-        e.hp -= owner ? bulletDamage(owner) : 1;
+        const dmg = owner ? bulletDamage(owner) : 1;
         b.dead = true;
-        if (e.hp <= 0) killEnemy(world, e, owner);
-        else addFx(world, 'hit', b.x, b.y, 1);
+        damageEnemy(world, e, dmg, owner);
         break;
       }
     }
@@ -1523,15 +1683,20 @@ export function stepWorld(world, dtSec, inputs) {
   world.enemies = world.enemies.filter((e) => !e.dead);
 
   // --- столкновения: простые противники × астероиды и кометы ---
+  // Орбитальный (В4) ломает метеориты на пути и сам не гибнет; остальные гибнут.
   for (const e of world.enemies) {
     if (e.dead) continue;
     for (const a of world.asteroids) {
       if (a.dead) continue;
       const dx = a.x - e.x;
       const dy = a.y - e.y;
-      const rr = a.r + B.enemies.radius;
+      const rr = a.r + (e.r || B.enemies.radius);
       if (dx * dx + dy * dy <= rr * rr) {
-        killEnemy(world, e, null);
+        if (e.kind === 'orbital') {
+          destroyAsteroid(world, a, null);
+        } else {
+          killEnemy(world, e, null);
+        }
         break;
       }
     }
@@ -1625,29 +1790,58 @@ export function stepWorld(world, dtSec, inputs) {
   for (const c of world.coins) {
     c.vx *= coinDamp;
     c.vy *= coinDamp;
-    // магнит: притяжение к ближайшему живому кораблю
-    let target = null;
-    let bestD = C.magnetRadius;
+    // магнит к ближайшему живому игроку (в пределах игрок.радиуса)
+    let pull = null;
+    let pullD = Infinity;
     for (const p of world.players) {
       if (!p.alive || p.out) continue;
       const d = Math.hypot(p.x - c.x, p.y - c.y);
-      if (d < bestD) { bestD = d; target = p; }
+      if (d < C.magnetRadius && d < pullD) { pullD = d; pull = p; }
     }
-    if (target) {
-      const d = Math.max(bestD, 1);
-      c.vx += ((target.x - c.x) / d) * C.magnetPull * dt;
-      c.vy += ((target.y - c.y) / d) * C.magnetPull * dt;
+    // голодные враги-сборщики (В4) перетягивают монету, если они ближе игрока
+    for (const e of world.enemies) {
+      if (e.dead) continue;
+      const st = enemyStats(e.kind);
+      const wants = e.kind === 'armored' ? e.armor < e.maxArmor
+        : e.kind === 'burst' ? e.powLvl < st.powMax : false;
+      if (!wants) continue;
+      const d = Math.hypot(e.x - c.x, e.y - c.y);
+      if (d <= st.coinMagnetR && d < pullD) { pullD = d; pull = e; }
+    }
+    if (pull) {
+      const d = Math.max(pullD, 1);
+      c.vx += ((pull.x - c.x) / d) * C.magnetPull * dt;
+      c.vy += ((pull.y - c.y) / d) * C.magnetPull * dt;
     }
     c.x += c.vx * dt;
     c.y += c.vy * dt;
     c.x = Math.max(C.radius, Math.min(w - C.radius, c.x));
     c.y = Math.max(C.radius, Math.min(h - C.radius, c.y));
 
-    if (target && Math.hypot(target.x - c.x, target.y - c.y) < C.pickupRadius) {
+    // подбор: игрок в приоритете при одновременном касании
+    let grabbed = null;
+    for (const p of world.players) {
+      if (!p.alive || p.out) continue;
+      if (Math.hypot(p.x - c.x, p.y - c.y) < C.pickupRadius) { grabbed = p; break; }
+    }
+    if (!grabbed && pull && pull.kind && Math.hypot(pull.x - c.x, pull.y - c.y) < enemyStats(pull.kind).coinPickupR) {
+      grabbed = pull;
+    }
+    if (grabbed) {
       c.dead = true;
-      target.coins++;
-      target.score += C.scorePerCoin;
-      addFx(world, 'coin', c.x, c.y, 1);
+      if (grabbed.kind === 'armored') {
+        // бронированный: 1 монета → +10% брони
+        grabbed.armor = Math.min(grabbed.maxArmor, grabbed.armor + grabbed.maxArmor * enemyStats(grabbed.kind).armorPerCoin);
+        addFx(world, 'coin', c.x, c.y, 1);
+      } else if (grabbed.kind === 'burst') {
+        // очередной стрелок: 1 монета → сильнее очередь
+        grabbed.powLvl = Math.min(enemyStats(grabbed.kind).powMax, grabbed.powLvl + 1);
+        addFx(world, 'coin', c.x, c.y, 1);
+      } else {
+        grabbed.coins++;
+        grabbed.score += C.scorePerCoin;
+        addFx(world, 'coin', c.x, c.y, 1);
+      }
     } else if (now - c.born > C.lifeMs) {
       c.dead = true;
     }
@@ -1972,11 +2166,15 @@ export function snapshotOf(world) {
     })),
     es: world.enemies.map((e) => ({
       i: e.id,
+      k: e.kind,
       x: Math.round(e.x * 10) / 10,
       y: Math.round(e.y * 10) / 10,
       a: Math.round(e.a * 100) / 100,
       h: e.hp,
       hm: e.maxHp,
+      ar: e.kind === 'armored' ? Math.round(e.armor * 10) / 10 : undefined,
+      am: e.maxArmor || undefined,
+      pw: e.powLvl || undefined,
     })),
     rk: world.missiles.map((k) => ({
       i: k.id,

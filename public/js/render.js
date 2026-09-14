@@ -551,44 +551,158 @@ export function createRenderer(canvas) {
       ctx.restore();
     }
 
-    // вражеские корабли
+    // вражеские корабли (4 вида: охотник, бронированный, очередь, орбитальный)
     for (const en of (s.es || [])) {
+      const kind = en.k || 'enemy';
       ctx.save();
       ctx.translate(en.x, en.y);
       ctx.rotate(en.a);
-      // пламя двигателя
-      const fl = 8 + Math.random() * 8;
-      ctx.fillStyle = Math.random() < 0.5 ? '#ff5a66' : '#ff9d4d';
-      ctx.beginPath();
-      ctx.moveTo(-11, -4);
-      ctx.lineTo(-11 - fl, 0);
-      ctx.lineTo(-11, 4);
-      ctx.closePath();
-      ctx.fill();
-      // корпус
-      ctx.fillStyle = '#1c1016';
-      ctx.strokeStyle = '#ff5a66';
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      ctx.moveTo(20, 0);
-      ctx.lineTo(-13, -12);
-      ctx.lineTo(-5, 0);
-      ctx.lineTo(-13, 12);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#ff8ad8';
-      ctx.beginPath();
-      ctx.arc(3, 0, 3.4, 0, Math.PI * 2);
-      ctx.fill();
+
+      if (kind === 'armored') {
+        // бронированный: шестигранная бронепластина
+        const fl = 7 + Math.random() * 6;
+        ctx.fillStyle = Math.random() < 0.5 ? '#5b6678' : '#7a8799';
+        ctx.beginPath();
+        ctx.moveTo(-10, -5);
+        ctx.lineTo(-10 - fl, 0);
+        ctx.lineTo(-10, 5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#232a38';
+        ctx.strokeStyle = '#6ec9ff';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        for (let k = 0; k < 6; k++) {
+          const ang = (k / 6) * Math.PI * 2;
+          const rr = k % 2 === 0 ? 15 : 12;
+          const px = Math.cos(ang) * rr;
+          const py = Math.sin(ang) * rr;
+          if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#3b4a63';
+        ctx.beginPath();
+        ctx.arc(0, 0, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#161d2b';
+        ctx.strokeStyle = '#8fd8ff';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(19, 0);
+        ctx.lineTo(8, -4);
+        ctx.lineTo(8, 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else if (kind === 'burst') {
+        // очередной стрелок: стреловидный с двумя стволами
+        const fl = 9 + Math.random() * 8;
+        ctx.fillStyle = Math.random() < 0.5 ? '#ff7b3d' : '#ffb158';
+        ctx.beginPath();
+        ctx.moveTo(-11, -4);
+        ctx.lineTo(-11 - fl, 0);
+        ctx.lineTo(-11, 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#1d1408';
+        ctx.strokeStyle = '#ffb158';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(21, 0);
+        ctx.lineTo(-12, -11);
+        ctx.lineTo(-6, 0);
+        ctx.lineTo(-12, 11);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.strokeStyle = '#ff7b3d';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(22, -3); ctx.lineTo(27, -3);
+        ctx.moveTo(22, 3); ctx.lineTo(27, 3);
+        ctx.stroke();
+        // пульс «заряженной очереди»
+        const pulse = 0.6 + 0.4 * Math.sin(now * 20 + en.i);
+        ctx.fillStyle = `rgba(255,160,60,${0.25 + 0.3 * pulse})`;
+        ctx.beginPath();
+        ctx.arc(0, 0, 2 + 3 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (kind === 'orbital') {
+        // орбитальный: круглая платформа с вращающимся кольцом
+        ctx.fillStyle = '#0d1a1e';
+        ctx.strokeStyle = '#4fe3c1';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 13, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.strokeStyle = '#8ffff0';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.arc(0, 0, 18, now * 3 + en.i, now * 3 + en.i + 4.2);
+        ctx.stroke();
+        ctx.fillStyle = '#4fe3c1';
+        ctx.beginPath();
+        ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#c9fff2';
+        ctx.beginPath();
+        ctx.arc(18, 0, 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // охотник: стандартный красный
+        const fl = 8 + Math.random() * 8;
+        ctx.fillStyle = Math.random() < 0.5 ? '#ff5a66' : '#ff9d4d';
+        ctx.beginPath();
+        ctx.moveTo(-11, -4);
+        ctx.lineTo(-11 - fl, 0);
+        ctx.lineTo(-11, 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#1c1016';
+        ctx.strokeStyle = '#ff5a66';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(20, 0);
+        ctx.lineTo(-13, -12);
+        ctx.lineTo(-5, 0);
+        ctx.lineTo(-13, 12);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#ff8ad8';
+        ctx.beginPath();
+        ctx.arc(3, 0, 3.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
+
       // полоска HP
-      if (en.h < en.hm) {
-        const bw = 30;
+      const bw = 30;
+      if (en.h < en.hm || kind === 'armored') {
         ctx.fillStyle = 'rgba(0,0,0,.55)';
         ctx.fillRect(en.x - bw / 2, en.y - 26, bw, 4);
-        ctx.fillStyle = '#ff5a66';
+        ctx.fillStyle = kind === 'armored' ? '#6ec9ff' : '#ff5a66';
         ctx.fillRect(en.x - bw / 2, en.y - 26, bw * Math.max(0, en.h / en.hm), 4);
+      }
+      // бронированный: полоска брони (иконка)
+      if (kind === 'armored' && en.am > 0) {
+        ctx.fillStyle = 'rgba(0,0,0,.55)';
+        ctx.fillRect(en.x - bw / 2, en.y - 21, bw, 3);
+        ctx.fillStyle = '#4fb6ff';
+        const ratio = Math.max(0, Math.min(1, (en.ar || 0) / en.am));
+        ctx.fillRect(en.x - bw / 2, en.y - 21, bw * ratio, 3);
+      }
+      // очередной стрелок: индикатор усиления монетами
+      if (kind === 'burst' && en.pw) {
+        ctx.fillStyle = '#ffb158';
+        for (let q = 0; q < Math.min(en.pw, 8); q++) {
+          ctx.beginPath();
+          ctx.arc(en.x - bw / 2 + 6 + q * 5, en.y - 31, 1.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
 

@@ -315,6 +315,44 @@ export const BALANCE = {
       composition: { small: 0.6, medium: 0.32, large: 0.08 } },
     comet:    { intervalMs: 1900, count: 6,  max: 6 },
     enemy:    { intervalMs: 8000, count: 2,  max: 2 },
+    // Бронированный (В4): броня = +100% HP, поглощает урон первой; собирает
+    // монеты (1 → +10% брони). При броне < 30% прекращает огонь и уходит за
+    // монетами, поэтому убить можно, если не дать ему пополниться.
+    armored: {
+      intervalMs: 8000, count: 1, max: 2,
+      hp: 5, armorHp: 5, radius: 20,
+      score: 220, coinsMin: 6, coinsMax: 9, energyMin: 3, energyMax: 5,
+      accel: 240, maxSpeed: 175, turnRate: 2.6,
+      fireCooldownMs: 1800, bulletSpeed: 380,
+      preferredDistMin: 250, preferredDistMax: 380, engageDistMax: 720,
+      armorPerCoin: 0.10, armorResupplyPct: 0.30,
+      coinMagnetR: 170, coinSeekR: 430, coinPickupR: 26,
+    },
+    // Очередной стрелок (В4): быстрые очереди (интервал 0.1с) с паузой 2с;
+    // собирает монеты — растёт: +выстрел в очереди и быстрее пули.
+    burst: {
+      intervalMs: 7000, count: 1, max: 2,
+      hp: 7, radius: 18,
+      score: 260, coinsMin: 7, coinsMax: 10, energyMin: 3, energyMax: 5,
+      accel: 260, maxSpeed: 185, turnRate: 3.0,
+      fireCooldownMs: 1500, bulletSpeed: 470,
+      preferredDistMin: 300, preferredDistMax: 430, engageDistMax: 760,
+      burstShots: 5, shotIntervalMs: 100, burstCooldownMs: 2000,
+      powMax: 6, powPerShot: 4, powSpeed: 0.04,
+      coinMagnetR: 140, coinSeekR: 380, coinPickupR: 26,
+    },
+    // Орбитальный (В4): держится на орбите вокруг игрока (не строго), высокая
+    // скорость; ломает метеориты, мешающие орбите, а столкновение с игроком
+    // наносит урон.
+    orbital: {
+      intervalMs: 12000, count: 1, max: 1,
+      hp: 6, radius: 17,
+      score: 250, coinsMin: 5, coinsMax: 8, energyMin: 2, energyMax: 4,
+      accel: 380, maxSpeed: 300, turnRate: 2.2,
+      fireCooldownMs: 0, bulletSpeed: 0,
+      preferredDistMin: 190, preferredDistMax: 330, engageDistMax: 0,
+      orbitRMin: 200, orbitRMax: 320,
+    },
   },
 
   // Очередь волн. Каждая волна:
@@ -356,6 +394,7 @@ export const BALANCE = {
             composition: { small: 0.45, medium: 0.40, large: 0.15 } },
           { kind: 'comet', intervalMs: 2200, count: 4 },
           { kind: 'enemy', intervalMs: 8000, count: 1 },
+          { kind: 'armored', intervalMs: 8000, count: 1 },
         ] },
       // 5. Кометный ливень
       { durationMs: 12000, cooldownMs: 2000,
@@ -370,6 +409,7 @@ export const BALANCE = {
           { kind: 'asteroid', intervalMs: 900, count: 16,
             composition: { small: 0.30, medium: 0.45, large: 0.25 } },
           { kind: 'enemy', intervalMs: 6000, count: 3 },
+          { kind: 'burst', intervalMs: 7000, count: 1 },
         ] },
       // 7. Фантом под прикрытием комет и врагов
       { durationMs: 16000, cooldownMs: 3000, bosses: ['phantom'],
@@ -378,6 +418,8 @@ export const BALANCE = {
             composition: { small: 0.35, medium: 0.45, large: 0.20 } },
           { kind: 'comet', intervalMs: 1800, count: 5 },
           { kind: 'enemy', intervalMs: 7000, count: 2 },
+          { kind: 'armored', intervalMs: 8000, count: 1 },
+          { kind: 'burst', intervalMs: 7000, count: 1 },
         ] },
       // 8. Полная тревога: всё и сразу
       { durationMs: 14000, cooldownMs: 2000,
@@ -386,6 +428,9 @@ export const BALANCE = {
             composition: { small: 0.30, medium: 0.40, large: 0.30 } },
           { kind: 'comet', intervalMs: 1400, count: 8 },
           { kind: 'enemy', intervalMs: 5500, count: 4 },
+          { kind: 'armored', intervalMs: 7000, count: 2 },
+          { kind: 'burst', intervalMs: 6000, count: 2 },
+          { kind: 'orbital', intervalMs: 12000, count: 1 },
         ] },
       // 9. Левиафан — финал всех фаз
       { durationMs: 18000, cooldownMs: 4000, bosses: ['leviathan'],
@@ -394,6 +439,9 @@ export const BALANCE = {
             composition: { small: 0.30, medium: 0.40, large: 0.30 } },
           { kind: 'comet', intervalMs: 1500, count: 6 },
           { kind: 'enemy', intervalMs: 6000, count: 3 },
+          { kind: 'armored', intervalMs: 6000, count: 2 },
+          { kind: 'burst', intervalMs: 6000, count: 2 },
+          { kind: 'orbital', intervalMs: 11000, count: 2 },
         ] },
       // 10. Бесконечный затяжной бой (повторяется) — без босса
       { durationMs: 15000, cooldownMs: 2500,
@@ -402,6 +450,9 @@ export const BALANCE = {
             composition: { small: 0.35, medium: 0.40, large: 0.25 } },
           { kind: 'comet', intervalMs: 1600, count: 7 },
           { kind: 'enemy', intervalMs: 6000, count: 3 },
+          { kind: 'armored', intervalMs: 7000, count: 2 },
+          { kind: 'burst', intervalMs: 6500, count: 2 },
+          { kind: 'orbital', intervalMs: 12000, count: 1 },
         ] },
     ],
   },

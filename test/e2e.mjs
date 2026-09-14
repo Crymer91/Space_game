@@ -153,6 +153,67 @@ try {
     ok(expThreshold(2) === expThreshold(1) * 2, 'порог следующего уровня растёт в ×2');
   }
 
+  // ---- Новые противники (В4): бронированный / очередь / орбитальный ----
+  {
+    const fresh = () => {
+      const w = createWorld({ playerIds: ['u'], nicknames: { u: 'Unit' }, durationMs: null, seed: 11 });
+      const p = w.players[0];
+      p.lives = 9999;
+      p.invulnUntil = 1e9;
+      return { w, p };
+    };
+    const stepN = (w, n) => {
+      for (let i = 0; i < n; i++) stepWorld(w, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
+    };
+    // 1) бронированный: урон сначала по броне, монета восполняет +10%
+    {
+      const { w, p } = fresh();
+      w.enemies.push({
+        id: 'v4-arm', kind: 'armored', x: p.x + 90, y: p.y, vx: 0, vy: 0, a: 0,
+        r: 20, hp: 5, maxHp: 5, armor: 5, maxArmor: 5, fireCdAt: 0, strafe: 1,
+      });
+      w.bullets.push({ id: 1, x: p.x, y: p.y, vx: 560, vy: 0, a: 0, owner: 'u', born: 0 });
+      stepN(w, 60);
+      const e = w.enemies.find((x) => x.id === 'v4-arm');
+      ok(e && e.hp === 5 && e.armor === 4, 'броня поглощает урон раньше HP');
+      w.coins.push({ id: 2, x: e.x - 60, y: e.y - 60, vx: 0, vy: 0, born: w.t });
+      stepN(w, 150);
+      const e2 = w.enemies.find((x) => x.id === 'v4-arm');
+      ok(e2 && e2.armor >= 4.5, 'монета восполняет броню (+10%)');
+    }
+    // 2) очередной стрелок: несколько выстрелов подряд
+    {
+      const { w, p } = fresh();
+      w.enemies.push({
+        id: 'v4-bur', kind: 'burst', x: p.x + 340, y: p.y, vx: 0, vy: 0, a: 0,
+        r: 18, hp: 7, maxHp: 7, burstLeft: 0, burstNextAt: 0, burstCdUntil: 0,
+        powLvl: 0, fireCdAt: 0, strafe: 1,
+      });
+      let fired = 0;
+      for (let i = 0; i < 180; i++) {
+        const before = w.bullets.length;
+        stepWorld(w, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
+        fired += Math.max(0, w.bullets.length - before);
+      }
+      ok(fired >= 5, `очередной стрелок даёт очередь выстрелов (было ${fired})`);
+    }
+    // 3) орбитальный: ломает метеорит на пути, сам жив
+    {
+      const { w, p } = fresh();
+      w.enemies.push({
+        id: 'v4-orb', kind: 'orbital', x: p.x + 200, y: p.y, vx: 0, vy: 0, a: 0,
+        r: 17, hp: 6, maxHp: 6, orbitR: 240, orbA: 0, orbDir: 1,
+      });
+      w.asteroids.push({
+        id: 9, type: 'small', x: p.x + 195, y: p.y + 5, vx: 0, vy: 0,
+        r: 14, hp: 1, maxHp: 1, rot: 0, rotSpeed: 0, shapeSeed: 1,
+      });
+      stepN(w, 120);
+      ok(!w.asteroids.some((a) => a.id === 9), 'орбитальный уничтожает метеорит на пути');
+      ok(w.enemies.some((x) => x.id === 'v4-orb'), 'орбитальный остаётся жив');
+    }
+  }
+
   a.disconnect();
   b.disconnect();
   await sleep(400);
