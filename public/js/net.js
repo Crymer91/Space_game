@@ -103,6 +103,12 @@ export const api = {
   sendInput: (payload) => socket?.emit('game:input', payload),
   buyUpgrade: (track) => ack({ event: 'game:buy', data: { track } }),
   submitSoloScore: (score, coins = 0) => ack({ event: 'solo:submit', data: { score, coins } }),
+  // модули (Б1): разблокировка/активация/усиление за монеты выбранного банка
+  moduleUnlock: (key, mode = 'solo') => ack({ event: 'module:unlock', data: { key, mode } }),
+  moduleSetActive: (key, active, mode = 'solo') => ack({ event: 'module:setActive', data: { key, mode, active } }),
+  moduleUpgrade: (key, mode = 'solo') => ack({ event: 'module:upgrade', data: { key, mode } }),
+  // карточки уровня rogue-like (А3): выбор «1 из 3» применяет сервер
+  selectCard: (cardId) => ack({ event: 'card:select', data: { cardId } }),
 };
 
 // удобный фасад для модулей игры

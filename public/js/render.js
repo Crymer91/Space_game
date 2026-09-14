@@ -27,6 +27,7 @@ const FX_COLORS = {
   shield: ['#7dd8ff', '#bff1ff'],
   laser: ['#ff5a66', '#ffb0b8'],
   mine: ['#ffb458', '#ffd08a'],
+  levelup: ['#b88bff', '#ffe9a8'],
 };
 
 function hashRand(seed) {
@@ -314,6 +315,73 @@ export function createRenderer(canvas) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(u.tp === 'rapidFire' ? '⚡' : '🛡', 0, 1);
+      ctx.restore();
+    }
+
+    // патроны для ракет (оранжевые «ящики» с ракетой)
+    for (const pk of (s.mp || [])) {
+      const pulse = 1 + 0.14 * Math.sin(now * 6 + pk.i);
+      ctx.save();
+      ctx.translate(pk.x, pk.y);
+      ctx.rotate(Math.PI / 4);
+      ctx.scale(pulse, pulse);
+      ctx.shadowColor = 'rgba(255,180,88,.7)';
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = '#3a2a12';
+      ctx.strokeStyle = '#ffb458';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.rect(-10, -10, 20, 20);
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      // мини-ракета внутри
+      ctx.fillStyle = '#dfe6f2';
+      ctx.strokeStyle = '#8fa2c0';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(5, 0);
+      ctx.lineTo(-4, -3);
+      ctx.lineTo(-2, 0);
+      ctx.lineTo(-4, 3);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // заряды способностей (броня/лазер/мины) — цветные шестиугольники
+    const AP_COLORS = { armor: '#7dd8ff', laser: '#ff6b9e', mines: '#ffb458' };
+    const AP_GLOW = { armor: 'rgba(125,216,255,.7)', laser: 'rgba(255,107,158,.7)', mines: 'rgba(255,180,88,.7)' };
+    const AP_ICONS = { armor: '🛡', laser: '⚡', mines: '💣' };
+    for (const pk of (s.ap || [])) {
+      const color = AP_COLORS[pk.k] || '#ffffff';
+      const glow = AP_GLOW[pk.k] || 'rgba(255,255,255,.3)';
+      const pulse = 1 + 0.14 * Math.sin(now * 6 + pk.i);
+      ctx.save();
+      ctx.translate(pk.x, pk.y);
+      ctx.rotate(now * 1.5 + pk.i);
+      ctx.shadowColor = glow;
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = '#1a1a2e';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let k = 0; k < 6; k++) {
+        const a = k * Math.PI / 3;
+        const r = 10 * pulse;
+        if (k === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+        else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = color;
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(AP_ICONS[pk.k] || '?', 0, 1);
       ctx.restore();
     }
 
@@ -773,16 +841,20 @@ export function createRenderer(canvas) {
 
   function buildCard(el, p, color) {
     el.style.borderColor = color;
-    const key = p.i + '|' + p.n + '|' + p.s + '|' + p.l + '|' + p.c + '|' + p.e + '|' + p.o + '|' + Math.ceil((p.rs || 0) / 1000);
+    const key = p.i + '|' + p.n + '|' + p.s + '|' + p.l + '|' + p.c + '|' + p.e + '|' + p.o + '|' + p.mk + '|' + p.hm + '|' + (p.lv||1) + '|' + Math.ceil((p.rs || 0) / 1000);
     if (hudCache[el.id] !== key) {
       hudCache[el.id] = key;
       const lives = p.o ? '✕' : '♥'.repeat(p.l) + '<span style="opacity:.25">' + '♥'.repeat(Math.max(0, BALANCE.ship.lives - p.l)) + '</span>';
+      const lv = p.lv || 1;
+      const thr = Math.round(BALANCE.exp.baseThreshold * Math.pow(BALANCE.exp.multiplier, lv - 1));
       el.innerHTML =
         `<div class="ph-nick" style="color:${color}">${escapeHtml(p.n)}</div>` +
         `<div class="ph-score">${p.s}</div>` +
         `<div class="ph-line"><span class="lives">${lives}</span>` +
         `<span class="coins-ico">● ${p.c}</span>` +
-        `<span class="energy-ico" title="Энергия (экспа)">✦ ${p.e}</span>` +
+        `<span class="lvl-ico" title="Уровень rogue-like">★ ${lv}</span>` +
+        `<span class="energy-ico" title="Энергия (экспа: ${p.e}/${thr})">✦ ${p.e}/${thr}</span>` +
+        (p.hm ? `<span class="rockets-ico" title="Боезапас ракет">🚀 ${p.mk}/${p.mm || BALANCE.missile.maxAmmo}</span>` : '') +
         (p.rs > 0 ? `<span style="color:#ffc24b">возрождение ${Math.ceil(p.rs / 1000)}…</span>` : '') +
         '</div>';
     }
@@ -863,14 +935,16 @@ export function createRenderer(canvas) {
           const parts=[];
           if (ab.sh > 0) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:#0a2e4a;color:#5ad0ff;border:1px solid #2a6ea6">🛡 врем. щит ${Math.ceil(ab.sh/1000)}с</span>`);
           if (ab.rf > 0) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:#4a1a3a;color:#ff6ba8;border:1px solid #a62a6e">⚡ ускорение ${Math.ceil(ab.rf/1000)}с</span>`);
-          if (ab.ar) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.ac>0?'#0e3a4a':'#222'};color:#7dd8ff;border:1px solid #2a5a6e">🛡 Броня x${ab.ac} ${ab.ac===0? '('+fmt(ab.arCd)+')':''}</span>`);
+          if (ab.ar) parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.ac>0?'#0e3a4a':'#1a1a1a'};color:${ab.ac>0?'#7dd8ff':'#555'};border:1px solid #2a5a6e">🛡 Броня ${ab.ac}/${ab.amx||5}</span>`);
           if (ab.ls) {
             const active = ab.la>0;
-            parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${active?'#4a0e1a': ab.lc<=0?'#3a1a2a':'#222'};color:#ff7a9e;border:1px solid #6e2a3a">Q ЛАЗЕР ${active? Math.ceil(ab.la/1000)+'с' : fmt(ab.lc)}</span>`);
+            const ready = ab.lac>0 && !active && ab.lc<=0;
+            parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${active?'#4a0e1a':ready?'#3a1a2a':'#1a1a1a'};color:${ab.lac>0?'#ff7a9e':'#555'};border:1px solid #6e2a3a">Q ЛАЗЕР ${ab.lac}/${ab.lamx||3} ${active? '🔥 '+Math.ceil(ab.la/1000)+'с' : (ab.lac>0&&ab.lc>0?fmt(ab.lc):(ab.lac<=0?'нет зарядов':''))}</span>`);
           }
           if (ab.mn) {
-            const maxM = ab.mx||5;
-            parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.mc<=0?'#2a2a0e':'#222'};color:#ffd27a;border:1px solid #6e5a2a">E МИНЫ ${ab.ml}/${maxM} ${ab.mc>0? '('+fmt(ab.mc)+')':''}</span>`);
+            const maxM = ab.mx||10;
+            const ready = ab.ml>0 && ab.mc<=0;
+            parts.push(`<span style="padding:2px 6px;border-radius:6px;background:${ab.ml>0?(ready?'#2a2a0e':'#222'):'#1a1a1a'};color:${ab.ml>0?'#ffd27a':'#555'};border:1px solid #6e5a2a">E МИНЫ ${ab.ml}/${maxM} ${ab.ml>0&&ab.mc>0? '('+fmt(ab.mc)+')':(ab.ml<=0?'нет зарядов':'')}</span>`);
           }
           hudEls.abilityBar.innerHTML = parts.join('');
         }

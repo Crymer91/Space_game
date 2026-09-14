@@ -1,4 +1,8 @@
-import { getPlayerStats, submitScore, upsertPlayer } from './db.js';
+import { getPlayerStats, getModules, submitScore, upsertPlayer, unlockModule, setModuleActive, upgradeModule } from './db.js';
+import { BALANCE } from '../shared/balance.js';
+import { moduleCost } from '../shared/world.js';
+
+const MODULES = BALANCE.upgrades.modules || {};
 
 const MIN_PLAYER_ID_LENGTH = 3;
 const MAX_PLAYER_ID_LENGTH = 64;
@@ -151,6 +155,17 @@ export function registerHandlers(io, { db, config, roomManager, matchmaking, gam
       if (typeof ack === 'function') ack({ ok: true, data: res });
     }));
 
+    // выбор карточки уровня rogue-like (А3): клиент присылает id выбранной карточки,
+    // сервер применяет её к игроку без списания экспы
+    socket.on('card:select', requireAuth((payload = {}, ack) => {
+      const session = gameManager?.get(socket.data.roomId);
+      if (!session) return fail(ack, 'no-session', 'No active game in this room');
+      const cardId = String(payload.cardId || '');
+      const res = session.selectCards(socket.data.player.playerId, cardId);
+      if (res.error) return fail(ack, res.error, res.message || `Cannot select card: ${res.error}`);
+      if (typeof ack === 'function') ack({ ok: true });
+    }));
+
     // рекорд одиночной игры (без комнаты)
     socket.on('solo:submit', requireAuth((payload = {}, ack) => {
       const score = Number(payload.score);
@@ -165,6 +180,42 @@ export function registerHandlers(io, { db, config, roomManager, matchmaking, gam
         mode: 'solo', coins: coinsSafe,
       });
       if (typeof ack === 'function') ack({ ok: true, data: stats });
+    }));
+
+    // --- модули (Б1): разблокировка → активация → усиление. Покупки в Ангаре. ---
+    // mode: 'solo' | 'multi' — оплата из соответствующего банка монет.
+    socket.on('module:unlock', requireAuth((payload = {}, ack) => {
+      const key = String(payload.key || '');
+      const mode = payload.mode === 'multi' ? 'multi' : 'solo';
+      if (!MODULES[key]) return fail(ack, 'unknown-module', `Unknown module: '${key}'`);
+      const cost = moduleCost(key, 'unlock') || 0;
+      const res = unlockModule(db, socket.data.player.playerId, mode, key, cost);
+      if (res.error) return fail(ack, res.error, `Cannot unlock module: ${res.error}`);
+      if (typeof ack === 'function') ack({ ok: true, data: res.stats });
+    }));
+
+    socket.on('module:setActive', requireAuth((payload = {}, ack) => {
+      const key = String(payload.key || '');
+      const mode = payload.mode === 'multi' ? 'multi' : 'solo';
+      if (!MODULES[key]) return fail(ack, 'unknown-module', `Unknown module: '${key}'`);
+      const active = !!payload.active;
+      const cost = active ? (moduleCost(key, 'activate') || 0) : 0;
+      const res = setModuleActive(db, socket.data.player.playerId, mode, key, active, cost);
+      if (res.error) return fail(ack, res.error, `Cannot set module: ${res.error}`);
+      if (typeof ack === 'function') ack({ ok: true, data: res.stats });
+    }));
+
+    socket.on('module:upgrade', requireAuth((payload = {}, ack) => {
+      const key = String(payload.key || '');
+      const mode = payload.mode === 'multi' ? 'multi' : 'solo';
+      if (!MODULES[key]) return fail(ack, 'unknown-module', `Unknown module: '${key}'`);
+      const st = getModules(db, socket.data.player.playerId, mode);
+      const level = st.levels[key] || 0;
+      const cost = moduleCost(key, 'upgrade', level);
+      if (cost == null) return fail(ack, 'max-level', 'Module is at max level');
+      const res = upgradeModule(db, socket.data.player.playerId, mode, key, level, cost);
+      if (res.error) return fail(ack, res.error, `Cannot upgrade module: ${res.error}`);
+      if (typeof ack === 'function') ack({ ok: true, data: res.stats });
     }));
 
     socket.on('disconnect', () => {

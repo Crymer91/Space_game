@@ -1,19 +1,67 @@
 // Одиночный режим: мир живёт прямо в браузере, без сервера.
-import { createWorld, stepWorld, snapshotOf, buyUpgrade } from '/shared/world.js';
+import { createWorld, stepWorld, snapshotOf, buyUpgrade, selectCard } from '/shared/world.js';
+import { showCardPicker, hideCardPicker } from './cards.js';
 
-export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult }) {
+// Solo-модули храним в localStorage (в Ангаре Б2 они будут и на сервере).
+const SOLO_MODULES_KEY = 'ab_modules_solo';
+
+export function loadSoloModules() {
+  try {
+    const raw = localStorage.getItem(SOLO_MODULES_KEY);
+    if (raw) {
+      const obj = JSON.parse(raw);
+      return {
+        unlocked: obj.unlocked || {},
+        active: obj.active || {},
+        levels: obj.levels || {},
+      };
+    }
+  } catch {}
+  return { unlocked: {}, active: {}, levels: {} };
+}
+
+// Новый модуль получен с босса (Фантом → ракеты): разблокируем и активируем.
+export function grantSoloModule(key) {
+  const st = loadSoloModules();
+  st.unlocked[key] = true;
+  st.active[key] = true;
+  if (st.levels[key] == null) st.levels[key] = 0;
+  try { localStorage.setItem(SOLO_MODULES_KEY, JSON.stringify(st)); } catch {}
+  return st;
+}
+
+export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult, modules }) {
+  hideCardPicker();
   const world = createWorld({
     playerIds: ['you'],
     nicknames: { you: nickname || 'Пилот' },
     durationMs: null, // бесконечно, пока живы
     seed: (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0,
+    modulesByPlayer: { you: modules },
   });
+  // убийство Фантома разблокирует модуль «Ракеты» в solo-банке
+  world.onModuleUnlock = (playerId, key) => {
+    if (key === 'rockets') grantSoloModule('rockets');
+  };
 
   let raf = null;
   let last = null;
   let acc = 0;
   const STEP = 1 / 60;
   let finished = false;
+  let pickerBusy = false;
+
+  // А3: после шага симуляции проверяем, появились ли карточки уровня
+  function checkCards() {
+    const pending = world.pendingCards && world.pendingCards.you;
+    if (pending && pending.length && !pickerBusy) {
+      pickerBusy = true;
+      showCardPicker(pending, (cardId) => {
+        selectCard(world, 'you', cardId);
+        pickerBusy = false;
+      });
+    }
+  }
 
   function frame(ts) {
     raf = requestAnimationFrame(frame);
@@ -32,6 +80,7 @@ export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult 
     if (input.wantsLaser()) { pendingLaser = input.consumeLaser(); }
     if (input.wantsMine()) { pendingMine = input.consumeMine(); }
     while (acc >= STEP && !finished) {
+      if (pickerBusy) { acc = 0; break; }
       acc -= STEP;
       const me = world.players[0];
       const move = input.getMove();
@@ -47,6 +96,8 @@ export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult 
         },
       });
       pendingLaser=false; pendingMine=false;
+      checkCards();
+      if (pickerBusy) { acc = 0; break; }
       if (world.status === 'over') {
         finished = true;
         break;
@@ -80,6 +131,7 @@ export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult 
   function stop() {
     if (raf) cancelAnimationFrame(raf);
     raf = null;
+    hideCardPicker();
   }
 
   return {

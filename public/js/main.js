@@ -2,7 +2,7 @@
 import { net, connect, api, getIdentity, saveNickname, isConnected } from './net.js';
 import { createInput } from './input.js';
 import { createRenderer } from './render.js';
-import { startLocalGame } from './local.js';
+import { startLocalGame, loadSoloModules } from './local.js';
 import { startMultiGame } from './multi.js';
 import { BALANCE } from '/shared/balance.js';
 
@@ -128,6 +128,7 @@ renderer.onFx((f, state) => {
     case 'energy': tone({ type: 'sine', from: 720, to: 1180, dur: 0.1, vol: 0.08 * vol }); break;
     case 'spawn': tone({ type: 'sine', from: 280, to: 940, dur: 0.22, vol: 0.08 * vol }); break;
     case 'upgrade': tone({ type: 'sine', from: 620, to: 620, dur: 0.09, vol: 0.09 * vol }); tone({ type: 'sine', from: 930, to: 930, dur: 0.12, vol: 0.08 * vol }); break;
+    case 'levelup': tone({ type: 'sine', from: 540, to: 1080, dur: 0.2, vol: 0.1 }); break;
     case 'shield': tone({ type: 'sine', from: 400, to: 800, dur: 0.18, vol: 0.09 * vol }); break;
     case 'laser': noiseBurst({ dur: 0.35, vol: 0.12*vol, cutoff: 2200 }); break;
     case 'mine': tone({ type: 'triangle', from: 180, to: 90, dur: 0.15, vol: 0.08*vol }); break;
@@ -284,6 +285,7 @@ function startSolo() {
       renderer,
       input,
       nickname: els.nickInput.value.trim(),
+      modules: loadSoloModules(),
       onBuyResult,
       onOver: async (results) => {
         if (isConnected()) {

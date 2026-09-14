@@ -31,7 +31,33 @@ function lerp(a, b, t) {
 
 const EMPTY_INPUT = Object.freeze({ mx: 0, my: 0, aim: undefined, shoot: false, mis:false, laser:false, mine:false });
 
-export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDurationMs, seed = 1 }) {
+// Характеристики модуля для конкретного уровня. Для ракет: макс.боезапас,
+// урон взрыва и шанс дропа растут с каждым уровнем (BALANCE.upgrades.modules).
+export function moduleStats(key, level) {
+  const def = B.upgrades.modules[key];
+  if (!def || !def.perLevel) return null;
+  const lvl = Math.max(0, Math.min(level || 0, def.maxLevel || 0));
+  const s = {};
+  for (const k of Object.keys(def.base || {})) s[k] = def.base[k];
+  for (const k of Object.keys(def.perLevel)) s[k] += def.perLevel[k] * lvl;
+  return s;
+}
+
+// Цена действия над модулем. action: 'unlock' | 'activate' | 'upgrade'
+// Для upgrade: nextLevel = текущий уровень (0..maxLevel-1), цена следующего шага.
+export function moduleCost(key, action, nextLevel) {
+  const def = B.upgrades.modules[key];
+  if (!def) return null;
+  if (action === 'unlock') return def.unlockCost;
+  if (action === 'activate') return def.activateCost;
+  if (action === 'upgrade') {
+    if (nextLevel >= def.maxLevel) return null; // максимальный уровень
+    return def.upgradeCosts[nextLevel] ?? null;
+  }
+  return null;
+}
+
+export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDurationMs, seed = 1, modulesByPlayer = {} }) {
   const world = {
     rng: mulberry32(seed),
     t: 0, // время симуляции, мс
@@ -56,6 +82,7 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     energySpheres: [],
     enemies: [],
     missiles: [],
+    missilePacks: [],
     fx: [],
     bosses: [],
     crystals: [],
@@ -63,18 +90,28 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     lasers: [],
     nextEnemyId: 1,
     nextMissileId: 1,
+    nextMissilePackId: 1,
     nextBossId: 1,
     nextCrystalId: 1,
     nextMineId: 1,
     nextLaserId: 1,
     nextPowerupId: 1,
+    nextAbilityPackId: 1,
     powerups: [],
+    abilityPacks: [],
     bossSpawnedKeys: {},
     bossesFought: 0,
     nebulaActive: false,
+    pendingCards: {}, // playerId → 3 случайные карточки при росте уровня (А3)
   };
   let i = 0;
   for (const id of playerIds) {
+    // состояние модулей режима из аккаунта (Б1): если модуль активен — патроны
+    // падают с врагов, мощность зависит от уровня.
+    const mods = (modulesByPlayer && modulesByPlayer[id]) || {};
+    const rocketActive = !!(mods.active && mods.active.rockets);
+    const rocketLvl = (mods.levels && mods.levels.rockets) || 0;
+    const rocketStats = moduleStats('rockets', rocketActive ? rocketLvl : 0);
     world.players.push({
       id,
       nick: nicknames[id] || id,
@@ -100,12 +137,17 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
       respawnAt: 0,
       invulnUntil: B.ship.invulnMs, // неуязвимость на старте
       missiles: 0, // боезапас самонаводящихся ракет
+      hasMissiles: rocketActive, // модуль «Ракеты»: активен только если включён в аккаунте
+      missileMaxAmmo: rocketStats.maxAmmo,
+      missileBlastDamage: rocketStats.blastDamage,
+      missileDropChance: rocketStats.dropChance,
       missileCdAt: 0,
       // способности от боссов
       hasArmor: false,
       armorCharges: 0,
-      armorRegenAt: 0,
       hasLaser: false,
+      laserCharges: 0,
+      laserMaxCharges: 0,
       laserActiveUntil: 0,
       laserCdUntil: 0,
       laserTickAt: 0,
@@ -115,6 +157,9 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
       // временные пауэр-апы с комет/врагов
       rapidFireUntil: 0,
       shieldUntil: 0,
+      // карточки (А3): бонусы уровня rogue-like
+      speedBonus: 0,           // +15% к максимальной скорости за карточку «Скорость»
+      energyMagnetBonus: 0,    // +30% к радиусу магнита экспы за карточку «Магнит»
     });
   }
   const w0 = B.waves.list && B.waves.list[0];
@@ -143,6 +188,80 @@ export function upgradeCost(track, level) {
 // достижении уровня (rogue-like, задача А3), поэтому функция отключена.
 export function buyUpgrade() {
   return { error: 'store-disabled', message: 'Апгрейды покупаются в Ангаре, а не в бою' };
+}
+
+// --- Rogue-like карточки (А3): экспа накапливается, при достижении порога —
+// уровень ↑ и бесплатный выбор «1 из 3». Энергия при этом не списывается. ---
+
+// Порог (накопленной энергии) для перехода на уровень `level` (1-индексный).
+export function expThreshold(level) {
+  if (!Number.isFinite(level) || level <= 1) return B.exp.baseThreshold;
+  return Math.round(B.exp.baseThreshold * Math.pow(B.exp.multiplier, level - 1));
+}
+
+// Карточки, которые игрок ещё может применить (жизнь/броня на максимуме не предлагаются).
+function availableCards(player) {
+  return B.cards.pool.filter((c) => {
+    if (c.id === 'life' && player.lives >= B.upgrades.life.maxLives) return false;
+    if (c.id === 'armor' && player.hasArmor && (player.armorCharges || 0) >= B.abilities.armor.maxCharges) return false;
+    return true;
+  });
+}
+
+// N случайных карточек из пула (перетасовка Файера–Йетса, общий сид solo/multi).
+export function pickRandomCards(rng, player, count = 3) {
+  const pool = availableCards(player);
+  if (!pool.length) return [];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  if (pool.length >= count) return pool.slice(0, count);
+  const res = pool.slice();
+  let k = 0;
+  while (res.length < count) { res.push(pool[k % pool.length]); k++; }
+  return res;
+}
+
+// Применяет эффект карточки к игроку. Возвращает true при успехе.
+export function applyCard(player, cardId) {
+  switch (cardId) {
+    case 'damage':
+      player.dmgLvl++;
+      return true;
+    case 'firerate':
+      player.rateLvl++;
+      return true;
+    case 'life':
+      if (player.lives >= B.upgrades.life.maxLives) return false;
+      player.lives++;
+      return true;
+    case 'speed':
+      player.speedBonus = (player.speedBonus || 0) + 0.15;
+      return true;
+    case 'magnet':
+      player.energyMagnetBonus = (player.energyMagnetBonus || 0) + 0.3;
+      return true;
+    case 'armor':
+      if (!player.hasArmor) player.hasArmor = true;
+      player.armorCharges = Math.min((player.armorCharges || 0) + 2, B.abilities.armor.maxCharges);
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Выбор карточки в бою: solo применяет локально, multi — через сервер (card:select).
+// При успехе карточка применена, и запись pending пропадает из мира.
+export function selectCard(world, playerId, cardId) {
+  const pending = world.pendingCards[playerId];
+  if (!pending || !pending.length) return { error: 'no-cards', message: 'Нет карточек для выбора' };
+  const player = world.players.find((p) => p.id === playerId);
+  if (!player) return { error: 'not-found', message: 'Корабль не найден' };
+  if (!pending.some((c) => c.id === cardId)) return { error: 'invalid-card', message: 'Неизвестная карточка' };
+  if (!applyCard(player, cardId)) return { error: 'cannot-apply', message: 'Карточку нельзя применить' };
+  delete world.pendingCards[playerId];
+  return { ok: true };
 }
 
 function addFx(world, type, x, y, size = 1, extra) {
@@ -313,28 +432,113 @@ function destroyAsteroid(world, a, owner) {
 }
 
 function grantAbility(world, p, kind) {
-  if (kind === 'armor' && !p.hasArmor) {
-    p.hasArmor = true;
-    p.armorCharges = B.abilities.armor.charges;
-    p.armorRegenAt = 0;
-    addFx(world, 'upgrade', p.x, p.y, 2);
-    return true;
+  if (kind === 'armor') {
+    const A = B.abilities.armor;
+    if (!p.hasArmor) {
+      p.hasArmor = true;
+      p.armorCharges = A.charges;
+      addFx(world, 'upgrade', p.x, p.y, 2);
+      return true;
+    }
+    if (p.armorCharges < A.maxCharges) {
+      p.armorCharges = Math.min(A.maxCharges, p.armorCharges + 1);
+      addFx(world, 'upgrade', p.x, p.y, 1);
+      return true;
+    }
+    return false;
   }
-  if (kind === 'laser' && !p.hasLaser) {
-    p.hasLaser = true;
-    p.laserCdUntil = 0;
-    p.laserActiveUntil = 0;
-    addFx(world, 'upgrade', p.x, p.y, 2);
-    return true;
+  if (kind === 'laser') {
+    const A = B.abilities.laser;
+    if (!p.hasLaser) {
+      p.hasLaser = true;
+      p.laserCharges = A.charges;
+      p.laserMaxCharges = A.maxCharges;
+      p.laserCdUntil = 0;
+      p.laserActiveUntil = 0;
+      addFx(world, 'upgrade', p.x, p.y, 2);
+      return true;
+    }
+    if (p.laserCharges < p.laserMaxCharges) {
+      p.laserCharges = Math.min(p.laserMaxCharges, p.laserCharges + 1);
+      addFx(world, 'upgrade', p.x, p.y, 1);
+      return true;
+    }
+    return false;
   }
-  if (kind === 'mines' && !p.hasMines) {
-    p.hasMines = true;
-    p.mineStock = B.abilities.mines.max;
-    p.mineCdUntil = 0;
-    addFx(world, 'upgrade', p.x, p.y, 2);
-    return true;
+  if (kind === 'mines') {
+    const A = B.abilities.mines;
+    if (!p.hasMines) {
+      p.hasMines = true;
+      p.mineStock = A.max;
+      p.mineCdUntil = 0;
+      addFx(world, 'upgrade', p.x, p.y, 2);
+      return true;
+    }
+    if (p.mineStock < A.maxStock) {
+      p.mineStock = Math.min(A.maxStock, p.mineStock + A.dropPack);
+      addFx(world, 'upgrade', p.x, p.y, 1);
+      return true;
+    }
+    return false;
+  }
+  if (kind === 'missiles') {
+    // модуль «Ракеты» с Фантома: разблокирует модуль и пополняет боезапас
+    const maxAmmo = p.missileMaxAmmo || B.missile.maxAmmo;
+    const gained = Math.min(maxAmmo, p.missiles + B.missile.pack) - p.missiles;
+    if (gained > 0 || !p.hasMissiles) {
+      p.hasMissiles = true;
+      p.missiles += Math.max(0, gained);
+      addFx(world, 'upgrade', p.x, p.y, 2);
+      return true;
+    }
+    return false;
   }
   return false;
+}
+
+// Патроны для ракет: выпадают с врагов/боссов, пока модуль «Ракеты» активен у убившего.
+function spawnMissilePack(world, x, y) {
+  const ang = world.rng() * Math.PI * 2;
+  const sp = rand(world.rng, 40, 140);
+  world.missilePacks.push({
+    id: world.nextMissilePackId++,
+    x,
+    y,
+    vx: Math.cos(ang) * sp,
+    vy: Math.sin(ang) * sp,
+    born: world.t,
+  });
+}
+
+// Заряды способностей (броня/лазер/мины): выпадают с врагов, пополняют запас.
+function spawnAbilityPack(world, x, y, kind) {
+  const ang = world.rng() * Math.PI * 2;
+  const sp = rand(world.rng, 40, 140);
+  world.abilityPacks.push({
+    id: world.nextAbilityPackId++,
+    kind,
+    x, y,
+    vx: Math.cos(ang) * sp,
+    vy: Math.sin(ang) * sp,
+    born: world.t,
+  });
+}
+
+// Попытка дропнуть заряд способности (броня/лазер/мины) с врага/босса.
+function tryDropAbilityPack(world, x, y, owner) {
+  if (!owner) return;
+  for (const kind of ['armor', 'laser', 'mines']) {
+    const has = kind === 'armor' ? owner.hasArmor : kind === 'laser' ? owner.hasLaser : owner.hasMines;
+    if (!has) continue;
+    const A = B.abilities[kind];
+    const cur = kind === 'armor' ? owner.armorCharges : kind === 'laser' ? owner.laserCharges : owner.mineStock;
+    const max = kind === 'armor' ? A.maxCharges : kind === 'laser' ? A.maxCharges : A.maxStock;
+    if (cur >= max) continue;
+    if (world.rng() < A.dropChance) {
+      spawnAbilityPack(world, x, y, kind);
+      return;
+    }
+  }
 }
 
 function spawnCrystal(world, x, y, kind, ability) {
@@ -361,7 +565,6 @@ function shipHit(world, p, now) {
   // броня от босса поглощает урон без потери жизни
   if (p.hasArmor && p.armorCharges > 0) {
     p.armorCharges--;
-    if (p.armorCharges <= 0) p.armorRegenAt = now + B.abilities.armor.regenMs;
     p.invulnUntil = now + 800; // короткая неуязвимость чтобы не заспамить
     addFx(world, 'shield', p.x, p.y, 1.4);
     return;
@@ -674,6 +877,18 @@ export function killEnemy(world, e, owner) {
   spawnCoinBurst(world, e.x, e.y, randInt(world.rng, B.enemies.coinsMin, B.enemies.coinsMax));
   const eEnergy = randInt(world.rng, B.enemies.energyMin, B.enemies.energyMax);
   if (eEnergy > 0) spawnEnergyBurst(world, e.x, e.y, eEnergy);
+  // патроны для ракет: только когда у убившего активен модуль (Б1) и боезапас не полон.
+  // Шанс дропа и потолок боезапаса зависят от уровня модуля.
+  const M = B.missile;
+  if (owner && owner.hasMissiles) {
+    const maxAmmo = owner.missileMaxAmmo || M.maxAmmo;
+    const dropChance = owner.missileDropChance != null ? owner.missileDropChance : M.dropChance;
+    if (owner.missiles < maxAmmo && world.rng() < dropChance) {
+      spawnMissilePack(world, e.x, e.y);
+    }
+  }
+  // заряды способностей: выпадают с врагов, если способность разблокирована (Б3)
+  tryDropAbilityPack(world, e.x, e.y, owner);
   if (world.rng() < B.powerups.enemyChance) {
     spawnPowerup(world, e.x, e.y);
   }
@@ -836,19 +1051,35 @@ function destroyBoss(world, boss, owner) {
     if(best) best.score += Math.floor(def.scoreReward*0.5);
   }
   addFx(world,'boom', boss.x, boss.y, 4.2);
-  // дроп: кристалл монет 1000 + кристалл способности рандом
+  // модуль «Ракеты»: убийство Фантома разблокирует его в аккаунте (Б1).
+  // Сессия (сервер/локаль) через world.onModuleUnlock сохраняет состояние.
+  if (boss.key === 'phantom' && owner && typeof world.onModuleUnlock === 'function') {
+    world.onModuleUnlock(owner.id, 'rockets');
+  }
+  // дроп: кристалл монет 1000 + кристалл способности/модуля
   const ang = world.rng()*Math.PI*2;
   spawnCrystal(world, boss.x + Math.cos(ang)*30, boss.y + Math.sin(ang)*30, 'coins');
-  // выбор способности: фантом гарантированно даёт мины если нету, иначе рандом из неполученных
+  // выбор способности: фантом гарантированно даёт модуль «Ракеты» (Q4),
+  // иначе рандом из неполученных. С боссов тоже падают патроны, если модуль активен.
   const pool = ['armor','laser','mines'];
   let choice = pool[Math.floor(world.rng()*pool.length)];
-  if (boss.key==='phantom' && owner && !owner.hasMines) choice='mines';
+  if (boss.key==='phantom' && owner) choice='missiles';
   else if (owner) {
     const need = pool.filter(k=> (k==='armor'&&!owner.hasArmor)||(k==='laser'&&!owner.hasLaser)||(k==='mines'&&!owner.hasMines));
     if (need.length) choice = need[Math.floor(world.rng()*need.length)];
   }
+  const M = B.missile;
+  if (owner && owner.hasMissiles) {
+    const maxAmmo = owner.missileMaxAmmo || M.maxAmmo;
+    const dropChance = owner.missileDropChance != null ? owner.missileDropChance : M.dropChance;
+    if (owner.missiles < maxAmmo && world.rng() < dropChance) {
+      spawnMissilePack(world, boss.x + 30, boss.y + 30);
+    }
+  }
   const ang2 = ang+Math.PI;
   spawnCrystal(world, boss.x + Math.cos(ang2)*30, boss.y + Math.sin(ang2)*30, 'ability', choice);
+  // заряды способностей с босса (Б3)
+  tryDropAbilityPack(world, boss.x, boss.y, owner);
 }
 
 function updateBosses(world, dt, now) {
@@ -1058,8 +1289,9 @@ function detonateMissile(world, k, small = false) {
   const M = B.missile;
   addFx(world, 'boom', k.x, k.y, small ? 1.4 : 2.4);
   const R = small ? M.blastRadius * 0.4 : M.blastRadius;
-  const dmg = small ? 2 : M.blastDamage;
   const owner = world.players.find((p) => p.id === k.owner) || null;
+  // урон зависит от уровня модуля «Ракеты» (Б1)
+  const dmg = small ? 2 : ((owner && owner.missileBlastDamage) || M.blastDamage);
   // урон получают только астероиды, кометы и враги — игроков не задевает
   for (const a of world.asteroids) {
     if (a.dead) continue;
@@ -1148,7 +1380,9 @@ export function stepWorld(world, dtSec, inputs) {
     p.vx *= damp;
     p.vy *= damp;
     const sp = Math.hypot(p.vx, p.vy);
-    if (sp > S.maxSpeed) { p.vx *= S.maxSpeed / sp; p.vy *= S.maxSpeed / sp; }
+    // карточка «Скорость» (А3): бонус к максимальной скорости умножается поверх базы
+    const maxSp = S.maxSpeed * (1 + (p.speedBonus || 0));
+    if (sp > maxSp) { p.vx *= maxSp / sp; p.vy *= maxSp / sp; }
     p.x += p.vx * dt;
     p.y += p.vy * dt;
 
@@ -1166,9 +1400,9 @@ export function stepWorld(world, dtSec, inputs) {
       spawnBullet(world, p);
     }
 
-    // пуск самонаводящейся ракеты (ПКМ / F)
-    if (inp.mis && now >= p.missileCdAt && p.missiles > 0) {
-      p.missileCdAt = now + B.upgrades.missiles.fireCooldownMs;
+    // пуск самонаводящейся ракеты (ПКМ / F) — только при активном модуле «Ракеты»
+    if (inp.mis && now >= p.missileCdAt && p.hasMissiles && p.missiles > 0) {
+      p.missileCdAt = now + B.missile.fireCooldownMs;
       p.missiles--;
       world.missiles.push({
         id: world.nextMissileId++,
@@ -1182,34 +1416,22 @@ export function stepWorld(world, dtSec, inputs) {
       addFx(world, 'shoot', p.x + Math.cos(p.a) * S.radius, p.y + Math.sin(p.a) * S.radius, 1);
     }
 
-    // регенерация брони
-    if (p.hasArmor && p.armorCharges < B.abilities.armor.charges && p.armorRegenAt && now >= p.armorRegenAt) {
-      p.armorCharges = B.abilities.armor.charges;
-      p.armorRegenAt = 0;
-      addFx(world, 'shield', p.x, p.y, 1.2);
-    }
-    // лазер: Q
-    if (inp.laser && p.hasLaser && now >= (p.laserCdUntil||0) && now >= (p.laserActiveUntil||0)) {
+    // лазер: Q — тратит 1 заряд из запаса (Б3: одноразовые заряды)
+    if (inp.laser && p.hasLaser && p.laserCharges > 0 && now >= (p.laserCdUntil||0) && now >= (p.laserActiveUntil||0)) {
+      p.laserCharges--;
       p.laserActiveUntil = now + B.abilities.laser.durationMs;
       p.laserCdUntil = now + B.abilities.laser.cooldownMs;
       p.laserTickAt = now;
       world.lasers.push({ id: world.nextLaserId++, owner: p.id, x:p.x, y:p.y, a:p.a, until: p.laserActiveUntil, nextTick: now });
       addFx(world, 'laser', p.x, p.y, 2);
     }
-    // мины: E — запас 5/5, после исчерпания КД 180с
+    // мины: E — запас одноразовых зарядов, пополняется дропом с врагов
     if (p.hasMines) {
-      if (p.mineStock <= 0 && p.mineCdUntil && now >= p.mineCdUntil) {
-        p.mineStock = B.abilities.mines.max;
-        p.mineCdUntil = 0;
-        addFx(world, 'upgrade', p.x, p.y, 1);
-      }
       if (inp.mine && p.mineStock > 0 && now >= (p.mineCdUntil||0)) {
         world.mines.push({ id: world.nextMineId++, owner: p.id, x: p.x, y: p.y, vx:0, vy:0, born: world.t });
         p.mineStock--;
+        p.mineCdUntil = now + B.abilities.mines.cooldownMs;
         addFx(world, 'mine', p.x, p.y, 1);
-        if (p.mineStock <= 0) {
-          p.mineCdUntil = now + B.abilities.mines.cooldownMs;
-        }
       }
     }
   }
@@ -1339,6 +1561,25 @@ export function stepWorld(world, dtSec, inputs) {
   world.bosses = world.bosses.filter((boss) => !boss.dead);
   world.bullets = world.bullets.filter((b) => !b.dead);
 
+  // --- столкновения: пули × ракеты (пуля сбивает ракету, кроме своих) ---
+  for (const b of world.bullets) {
+    if (b.dead) continue;
+    for (const k of world.missiles) {
+      if (k.dead) continue;
+      if (!b.enemy && b.owner === k.owner) continue; // свои пули не сбивают свою ракету
+      const dx = k.x - b.x;
+      const dy = k.y - b.y;
+      const rr = B.missile.radius + B.bullet.radius;
+      if (dx * dx + dy * dy <= rr * rr) {
+        b.dead = true;
+        detonateMissile(world, k); // подбитая ракета взрывается там, где была
+        break;
+      }
+    }
+  }
+  world.missiles = world.missiles.filter((k) => !k.dead);
+  world.bullets = world.bullets.filter((b) => !b.dead);
+
   // --- столкновения: корабли × всё опасное ---
   for (const p of world.players) {
     if (!p.alive || p.out || now < p.invulnUntil) continue;
@@ -1419,13 +1660,14 @@ export function stepWorld(world, dtSec, inputs) {
   for (const s of world.energySpheres) {
     s.vx *= enDamp;
     s.vy *= enDamp;
-    // магнит: притяжение к ближайшему живому кораблю
+    // магнит: притяжение к ближайшему живому кораблю (радиус зависит от бонуса карточки)
     let target = null;
-    let bestD = EN.magnetRadius;
+    let bestD = Infinity;
     for (const p of world.players) {
       if (!p.alive || p.out) continue;
       const d = Math.hypot(p.x - s.x, p.y - s.y);
-      if (d < bestD) { bestD = d; target = p; }
+      const radius = EN.magnetRadius * (1 + (p.energyMagnetBonus || 0));
+      if (d < radius && d < bestD) { bestD = d; target = p; }
     }
     if (target) {
       const d = Math.max(bestD, 1);
@@ -1442,11 +1684,99 @@ export function stepWorld(world, dtSec, inputs) {
       target.energy++;
       target.exp++;
       addFx(world, 'energy', s.x, s.y, 1);
+      // А3: энергия — прогресс уровня; при достижении порога — уровень ↑ + карточки
+      if (!world.pendingCards[target.id] && target.energy >= expThreshold(target.level)) {
+        target.level++;
+        world.pendingCards[target.id] = pickRandomCards(world.rng, target, 3);
+        addFx(world, 'levelup', target.x, target.y, 2);
+      }
     } else if (now - s.born > EN.lifeMs) {
       s.dead = true;
     }
   }
   world.energySpheres = world.energySpheres.filter((s) => !s.dead);
+
+  // --- патроны для ракет (дроп с врагов/боссов, магнит к кораблю с модулем) ---
+  {
+    const MP = B.missile;
+    const mpDamp = Math.exp(-1.6 * dt);
+    for (const pk of world.missilePacks) {
+      pk.vx *= mpDamp;
+      pk.vy *= mpDamp;
+      let target = null;
+      let bestD = MP.packMagnetRadius;
+      for (const p of world.players) {
+        if (!p.alive || p.out) continue;
+        if (!p.hasMissiles || p.missiles >= (p.missileMaxAmmo || MP.maxAmmo)) continue;
+        const d = Math.hypot(p.x - pk.x, p.y - pk.y);
+        if (d < bestD) { bestD = d; target = p; }
+      }
+      if (target) {
+        const d = Math.max(bestD, 1);
+        pk.vx += ((target.x - pk.x) / d) * MP.packMagnetPull * dt;
+        pk.vy += ((target.y - pk.y) / d) * MP.packMagnetPull * dt;
+      }
+      pk.x += pk.vx * dt;
+      pk.y += pk.vy * dt;
+      pk.x = Math.max(MP.packRadius, Math.min(w - MP.packRadius, pk.x));
+      pk.y = Math.max(MP.packRadius, Math.min(h - MP.packRadius, pk.y));
+      if (target && Math.hypot(target.x - pk.x, target.y - pk.y) < MP.packPickupRadius) {
+        pk.dead = true;
+        target.missiles = Math.min(target.missileMaxAmmo || MP.maxAmmo, target.missiles + MP.pack);
+        addFx(world, 'upgrade', pk.x, pk.y, 1);
+      } else if (now - pk.born > MP.packLifeMs) {
+        pk.dead = true;
+      }
+    }
+    world.missilePacks = world.missilePacks.filter((p) => !p.dead);
+  }
+
+  // --- заряды способностей (броня/лазер/мины) — магнит к кораблю с разблокированной способностью ---
+  {
+    const AP = B.abilityPack;
+    const apDamp = Math.exp(-AP.driftDamping * dt);
+    for (const pk of world.abilityPacks) {
+      pk.vx *= apDamp;
+      pk.vy *= apDamp;
+      let target = null;
+      let bestD = AP.magnetRadius;
+      for (const p of world.players) {
+        if (!p.alive || p.out) continue;
+        const has = pk.kind === 'armor' ? p.hasArmor : pk.kind === 'laser' ? p.hasLaser : p.hasMines;
+        if (!has) continue;
+        const A = B.abilities[pk.kind];
+        const cur = pk.kind === 'armor' ? p.armorCharges : pk.kind === 'laser' ? p.laserCharges : p.mineStock;
+        const max = pk.kind === 'armor' ? A.maxCharges : pk.kind === 'laser' ? A.maxCharges : A.maxStock;
+        if (cur >= max) continue;
+        const d = Math.hypot(p.x - pk.x, p.y - pk.y);
+        if (d < bestD) { bestD = d; target = p; }
+      }
+      if (target) {
+        const d = Math.max(bestD, 1);
+        pk.vx += ((target.x - pk.x) / d) * AP.magnetPull * dt;
+        pk.vy += ((target.y - pk.y) / d) * AP.magnetPull * dt;
+      }
+      pk.x += pk.vx * dt;
+      pk.y += pk.vy * dt;
+      pk.x = Math.max(AP.radius, Math.min(w - AP.radius, pk.x));
+      pk.y = Math.max(AP.radius, Math.min(h - AP.radius, pk.y));
+      if (target && Math.hypot(target.x - pk.x, target.y - pk.y) < AP.pickupRadius) {
+        pk.dead = true;
+        const A = B.abilities[pk.kind];
+        if (pk.kind === 'armor') {
+          target.armorCharges = Math.min(A.maxCharges, target.armorCharges + A.dropPack);
+        } else if (pk.kind === 'laser') {
+          target.laserCharges = Math.min(A.maxCharges, target.laserCharges + A.dropPack);
+        } else {
+          target.mineStock = Math.min(A.maxStock, target.mineStock + A.dropPack);
+        }
+        addFx(world, 'upgrade', pk.x, pk.y, 1);
+      } else if (now - pk.born > AP.lifeMs) {
+        pk.dead = true;
+      }
+    }
+    world.abilityPacks = world.abilityPacks.filter((p) => !p.dead);
+  }
 
   // --- powerups (щит/ускорение с комет/врагов) ---
   {
@@ -1487,6 +1817,8 @@ export function stepWorld(world, dtSec, inputs) {
   world.mines = world.mines.filter((m) => !m.dead);
   world.crystals = world.crystals.filter((c) => !c.dead);
   world.energySpheres = world.energySpheres.filter((s) => !s.dead);
+  world.missilePacks = world.missilePacks.filter((p) => !p.dead);
+  world.abilityPacks = world.abilityPacks.filter((p) => !p.dead);
   world.lasers = world.lasers.filter((l) => !l.dead);
 
   // --- эффекты: удаляем старше 600 мс ---
@@ -1590,14 +1922,18 @@ export function snapshotOf(world) {
       d: p.deaths,
       dl: p.dmgLvl,
       rl: p.rateLvl,
+      lv: p.level,
       rs: p.alive ? 0 : Math.max(0, p.respawnAt - world.t),
       iv: Math.max(0, p.invulnUntil - world.t),
       th: p.thrust ? 1 : 0,
       mk: p.missiles || 0,
+      hm: p.hasMissiles ? 1 : 0,
+      mm: p.missileMaxAmmo || B.missile.maxAmmo,
       ab: {
-        ar: p.hasArmor ? 1 : 0, ac: p.armorCharges||0, arCd: Math.max(0, (p.armorRegenAt||0)-world.t),
+        ar: p.hasArmor ? 1 : 0, ac: p.armorCharges||0, amx: B.abilities.armor.maxCharges,
         ls: p.hasLaser ? 1 : 0, lc: Math.max(0,(p.laserCdUntil||0)-world.t), la: Math.max(0,(p.laserActiveUntil||0)-world.t),
-        mn: p.hasMines ? 1 : 0, mc: Math.max(0,(p.mineCdUntil||0)-world.t), ml: p.mineStock||0, mx: B.abilities.mines.max,
+        lac: p.laserCharges||0, lamx: p.laserMaxCharges||0,
+        mn: p.hasMines ? 1 : 0, mc: Math.max(0,(p.mineCdUntil||0)-world.t), ml: p.mineStock||0, mx: B.abilities.mines.maxStock,
         rf: world.t < p.rapidFireUntil ? Math.max(0, p.rapidFireUntil - world.t) : 0,
         sh: world.t < p.shieldUntil ? Math.max(0, p.shieldUntil - world.t) : 0,
       },
@@ -1648,6 +1984,8 @@ export function snapshotOf(world) {
       y: Math.round(k.y),
       a: Math.round(k.a * 100) / 100,
     })),
+    mp: world.missilePacks.map((pk) => ({ i: pk.id, x: Math.round(pk.x), y: Math.round(pk.y) })),
+    ap: world.abilityPacks.map((pk) => ({ i: pk.id, x: Math.round(pk.x), y: Math.round(pk.y), k: pk.kind })),
     cs: world.coins.map((c) => ({ i: c.id, x: Math.round(c.x), y: Math.round(c.y) })),
     en: world.energySpheres.map((s) => ({ i: s.id, x: Math.round(s.x), y: Math.round(s.y) })),
     cw: world.pendingComets.map((pc) => ({
@@ -1665,5 +2003,6 @@ export function snapshotOf(world) {
     mn: world.mines.map((m)=>({ i:m.id, x:Math.round(m.x), y:Math.round(m.y) })),
     ls: world.lasers.map((l)=>({ i:l.id, x:Math.round(l.x), y:Math.round(l.y), a:Math.round(l.a*100)/100, o:l.owner })),
     fx: world.fx.map((f) => ({ i: f.id, tp: f.type, x: Math.round(f.x), y: Math.round(f.y), z: f.size, k: f.k })),
+    pc: world.pendingCards, // { playerId: [cardObj, ...] } — А3: карточки для выбора
   };
 }

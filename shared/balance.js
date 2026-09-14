@@ -109,6 +109,26 @@ export const BALANCE = {
     driftDamping: 1.6,  // затухание разлёта после выпадения
   },
 
+  // Rogue-like (А3): экспа накапливается как прогресс и не тратится. При
+  // достижении порога следующего уровня — бесплатный выбор «1 из 3» карточек.
+  // Логика применения карточек — в shared/world.js (applyCard); здесь только
+  // id/название/иконка/описание для генерации оверлея в браузере.
+  exp: {
+    baseThreshold: 10,  // энергии для первого уровня (1→2)
+    multiplier: 2,      // каждый следующий уровень дороже в ×2
+  },
+
+  cards: {
+    pool: [
+      { id: 'damage', name: 'Урон +1', icon: '💥', desc: '+1 урон каждого выстрела' },
+      { id: 'firerate', name: 'Скорострельность', icon: '⚡', desc: '+1 уровень скорострельности' },
+      { id: 'life', name: '+1 Жизнь', icon: '❤', desc: '+1 к запасу жизней (до 5)' },
+      { id: 'speed', name: 'Скорость +15%', icon: '💨', desc: 'Выше максимальная скорость корабля' },
+      { id: 'magnet', name: 'Магнит экспы +30%', icon: '🧲', desc: 'Шире радиус подбора сфер энергии' },
+      { id: 'armor', name: 'Броня +2', icon: '🛡', desc: '+2 заряда брони (до 5)' },
+    ],
+  },
+
   upgrades: {
     damage: {
       name: 'Урон',
@@ -125,23 +145,79 @@ export const BALANCE = {
       cost: 20,
       maxLives: 5,             // потолок: базовые 3 жизни + максимум 2 докупленные
     },
-    missiles: {
-      name: 'Ракеты',
-      cost: 100,
-      pack: 3,                 // сколько ракет даёт одна покупка
-      maxAmmo: 6,              // запас в запасе (боекомплект)
-      fireCooldownMs: 500,
+
+    // Модули (Б1): разблокировка → активация → усиление.
+    //   unlockCost      — цена разблокировки в Ангаре (монеты режима). Для ракет
+    //                     разблокировка происходит бесплатно с босса Фантома.
+    //   activateCost    — цена активации в Ангаре. Пока модуль не активирован,
+    //                     заряды с врагов не падают.
+    //   upgradeCosts    — стоимость каждого уровня: upgradeCosts[n] = цена для
+    //                     перехода на уровень (n+1) (т.е. 0-й элемент → ур.1 из ур.0).
+    //   maxLevel        — потолок уровня.
+    // Эффект от уровня задаётся функциями-умножителями (см. moduleStats в world.js).
+    modules: {
+      rockets: {
+        key: 'rockets', name: 'Ракеты',
+        desc: 'Самонаводящиеся ракеты. Разблокируются с босса Фантома; после активации патроны падают с врагов.',
+        unlockableFromBoss: 'phantom', // босс, с которого выпадает разблокировка модуля
+        unlockCost: 0,        // с Фантома — бесплатно; в Ангаре будет цена
+        activateCost: 10,
+        upgradeCosts: [10, 20, 40, 80], // ур.1,2,3,4
+        maxLevel: 4,
+        base: {
+          maxAmmo: 6,          // базовый потолок боезапаса (ур.0)
+          blastDamage: 5,      // базовый урон взрыва
+          pack: 2,             // сколько ракет даёт один дроп
+          dropChance: 0.35,    // базовый шанс выпадения патронов с врагов
+        },
+        perLevel: {
+          maxAmmo: 2,          // +макс. боезапас за уровень
+          blastDamage: 1,      // +урон взрыва за уровень
+          dropChance: 0.05,    // +шанс дропа за уровень
+        },
+      },
+      laser: {
+        key: 'laser', name: 'Лазер',
+        desc: 'Мощный лазер по направлению прицела.',
+        unlockCost: 40, activateCost: 15,
+        upgradeCosts: [15, 30, 60], maxLevel: 3,
+      },
+      mines: {
+        key: 'mines', name: 'Мины',
+        desc: 'Разбрасывает мины, взрывающиеся при контакте с врагом.',
+        unlockCost: 40, activateCost: 15,
+        upgradeCosts: [15, 30, 60], maxLevel: 3,
+      },
+      armor: {
+        key: 'armor', name: 'Броня',
+        desc: 'Поглощает урон вместо жизни.',
+        unlockCost: 30, activateCost: 10,
+        upgradeCosts: [10, 20, 40], maxLevel: 3,
+      },
     },
   },
 
+  // Модуль «Ракеты» (Д1/Б1): по умолчанию ракет нет — модуль разблокируется с
+  // босса Фантома, после чего патроны могут падать с врагов (если модуль активен).
+  // Здесь — физика ракеты и дропа; значения «по умолчанию» (базовые, уровень 0).
+  // Скалирование по уровню модуля (макс.боезапас/урон/шанс дропа) — см. BALANCE.upgrades.modules.
   missile: {
     radius: 5,
-    accel: 560,
-    maxSpeed: 440,
+    accel: 340,                // снижено (было 560) — ракета разгоняется плавнее
+    maxSpeed: 260,             // снижено (было 440) — ракета летит медленнее
     turnRate: 4.4,             // рад/с — скорость доворота на цель
     lifeMs: 4000,
     blastRadius: 95,
-    blastDamage: 5,
+    blastDamage: 5,            // базовый (ур.0); растёт с уровнем модуля
+    maxAmmo: 6,                // базовый потолок боезапаса (ур.0)
+    pack: 2,                   // сколько ракет даёт один пополняющий дроп
+    fireCooldownMs: 500,       // задержка между пусками
+    dropChance: 0.35,          // базовый шанс дропа патронов (ур.0)
+    packRadius: 10,            // размер иконки патронов
+    packMagnetRadius: 64,      // магнит патронов к кораблю с активным модулем
+    packMagnetPull: 420,
+    packPickupRadius: 24,
+    packLifeMs: 12000,
   },
 
   powerups: {
@@ -195,9 +271,18 @@ export const BALANCE = {
   },
 
   abilities: {
-    armor:  { name: 'Броня', charges: 1, regenMs: 15000 },
-    laser:  { name: 'Лазер', durationMs: 5000, cooldownMs: 90000, dps: 18, width: 14, tickMs: 90 },
-    mines:  { name: 'Мины', max: 5, cooldownMs: 180000, blastRadius: 115, blastDamage: 7, chainRadius: 210, maxChain: 6, armMs: 400 },
+    armor:  { name: 'Броня', charges: 2, maxCharges: 5, dropChance: 0.12, dropPack: 1 },
+    laser:  { name: 'Лазер', durationMs: 5000, cooldownMs: 4000, dps: 18, width: 14, tickMs: 90, charges: 1, maxCharges: 3, dropChance: 0.12, dropPack: 1 },
+    mines:  { name: 'Мины', max: 3, maxStock: 10, cooldownMs: 2000, blastRadius: 115, blastDamage: 7, chainRadius: 210, maxChain: 6, armMs: 400, dropChance: 0.15, dropPack: 2 },
+  },
+
+  abilityPack: {
+    radius: 10,
+    magnetRadius: 64,
+    magnetPull: 420,
+    pickupRadius: 24,
+    lifeMs: 12000,
+    driftDamping: 1.6,
   },
 
   mine: {

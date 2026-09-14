@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { io } from 'socket.io-client';
+import { createWorld, stepWorld, snapshotOf, selectCard, expThreshold } from '../shared/world.js';
 
 const PORT = 3199;
 const URL = `http://127.0.0.1:${PORT}`;
@@ -89,6 +90,68 @@ try {
   ok(submit?.ok && submit.data.bestScore >= 1234, 'рекорд сохраняется');
   ok(submit.data.coinsSolo >= 7, 'монеты solo попадают в раздельный банк coinsSolo');
   ok(submit.data.coinsMulti === 0, 'банк мультиплеера не смешивается с solo');
+
+  // ---- модули (Б1): разблокировка → активация → усиление ----
+  const modUnlock = await emitAck(a, 'module:unlock', { key: 'rockets', mode: 'solo' });
+  ok(modUnlock?.ok && modUnlock.data.modules?.solo?.unlocked?.rockets === true,
+    'ракеты разблокируются бесплатно (с Фантома) и попадают в solo');
+  const modUnlockAgain = await emitAck(a, 'module:unlock', { key: 'rockets', mode: 'solo' });
+  ok(modUnlockAgain?.error === 'already-unlocked', 'повторная разблокировка отклоняется');
+  const badMod = await emitAck(a, 'module:unlock', { key: 'nope', mode: 'solo' });
+  ok(badMod?.error === 'unknown-module', 'неизвестный модуль отклоняется');
+  // активация за 10 монет из solo-банка (сейчас 7 — не хватает)
+  const modAct = await emitAck(a, 'module:setActive', { key: 'rockets', mode: 'solo', active: true });
+  ok(modAct?.error === 'not-enough-coins', 'активация стоит монет из банка режима');
+  const modUpNo = await emitAck(a, 'module:upgrade', { key: 'rockets', mode: 'solo' });
+  ok(modUpNo?.error === 'not-enough-coins', 'улучшение требует монет');
+  // пополняем solo-банк и активируем
+  await emitAck(a, 'solo:submit', { score: 2000, coins: 20 });
+  const modAct2 = await emitAck(a, 'module:setActive', { key: 'rockets', mode: 'solo', active: true });
+  ok(modAct2?.ok && modAct2.data.modules?.solo?.active?.rockets === true,
+    'активация модуля после оплаты успешна');
+  ok(modAct2.data.coinsSolo < 27, 'монеты списались из solo-банка');
+  const modUp = await emitAck(a, 'module:upgrade', { key: 'rockets', mode: 'solo' });
+  ok(modUp?.ok && modUp.data.modules?.solo?.levels?.rockets === 1,
+    'уровень модуля ракеты растёт (0 → 1)');
+  const modUpMulti = await emitAck(a, 'module:upgrade', { key: 'rockets', mode: 'multi' });
+  ok(modUpMulti?.error === 'not-unlocked', 'банк мультиплеера независим от solo');
+
+  // ---- карточки уровня (А3): сервер принимает выбор только по pending карточкам ----
+  const cardNo = await emitAck(a, 'card:select', { cardId: 'damage' });
+  ok(cardNo?.error === 'no-cards', 'выбор карточки без pending отклоняется');
+  const cardBad = await emitAck(b, 'card:select', { cardId: 'nope' });
+  ok(cardBad?.error === 'no-cards', 'выбор без pending отклоняется и для второго игрока');
+  const cardNoAuth = await new Promise((resolve) => {
+    const c = io(URL, { transports: ['websocket'] });
+    c.on('connect', async () => {
+      resolve(await emitAck(c, 'card:select', { cardId: 'damage' }));
+      c.disconnect();
+    });
+  });
+  ok(cardNoAuth?.error === 'not-authorized', 'card:select без auth отклоняется');
+
+  // ---- Rogue-like карточки (А3): уровень → 3 карточки → бесплатный выбор ----
+  // Проверяем общую симуляцию (одну для solo и multi) детерминированно: без сети.
+  {
+    const world = createWorld({ playerIds: ['u'], nicknames: { u: 'Unit' }, durationMs: null, seed: 42 });
+    const p = world.players[0];
+    // порог 1→2 = БАЗА (10); ставим 9 экспы и кладём 1 сферу точно в игрока
+    p.energy = expThreshold(p.level) - 1;
+    world.energySpheres.push({ id: 1, x: p.x, y: p.y, vx: 0, vy: 0, born: world.t });
+    stepWorld(world, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
+    ok(p.level === 2, 'уровень ↑ при достижении порога экспы');
+    ok(Array.isArray(world.pendingCards.u) && world.pendingCards.u.length === 3,
+      'генерируются 3 случайные карточки');
+    ok(world.pendingCards.u.every((c) => c.id && c.name && c.desc),
+      'карточки содержат id/название/описание');
+    const snap = snapshotOf(world);
+    ok(snap.pc && snap.pc.u && snap.pc.u.length === 3, 'снапшот отдаёт карточки клиенту');
+    const spent = p.energy;
+    const res = selectCard(world, 'u', world.pendingCards.u[0].id);
+    ok(res.ok && world.pendingCards.u == null, 'выбор карточки применён, pending очищен');
+    ok(p.energy === spent, 'энергия не списывается при выборе карточки');
+    ok(expThreshold(2) === expThreshold(1) * 2, 'порог следующего уровня растёт в ×2');
+  }
 
   a.disconnect();
   b.disconnect();

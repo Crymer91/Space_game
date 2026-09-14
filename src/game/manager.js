@@ -19,6 +19,7 @@ export class GameManager {
       io: this.io,
       config: this.config,
       logger: this.logger,
+      db: this.db,
     });
     // естественное завершение матча: рассылаем результаты и закрываем комнату
     session.onOver = (results) => {
