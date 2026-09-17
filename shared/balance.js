@@ -237,12 +237,65 @@ export const BALANCE = {
 
   bosses: {
     // Боссы выпускаются волнами через waves.list[].bosses (см. конфигурацию волн).
+    // У каждого босса 3 варианта: базовый (key, 1 фаза), усиленный (key+, 2 фазы),
+    // сильнейший (key++, 3 фазы). Поздние волны выпускают усиленные версии.
+    // Поля фаз:
+    //   phaseCount   — всего фаз у варианта (1..3)
+    //   startPhase   — с какой фазы начинается бой (по умолчанию 1)
+    //   phasesAt     — проценты max HP, при падении ниже которых включается
+    //                  следующая фаза; длина = phaseCount − startPhase
+    //   спос. from   — с какой фазы активна способность (armorFrom/burstFrom/
+    //                  mineFrom/teleportFrom/cloneFrom/spiralFrom/laserFrom)
     types: {
       dreadnought: {
         key: 'dreadnought', name: 'Дредноут',
         hp: 140, radius: 52, scoreReward: 600,
         accel: 90, maxSpeed: 95, turnRate: 1.6,
         fireCooldownMs: 900, bulletSpeed: 380, bulletCount: 3, spread: 0.22,
+        phaseCount: 1, // базовый — 1 фаза: стандартный веер из 3 пуль
+        // В3-способности (очереди + щит) включаются с фазы 2 — у базовой версии
+        // до неё не доходит, но поведение сохраняется для вручную созданных боссов
+        burstFrom: 2,
+        burst: { volleys: 3, intervalMs: 260, reloadMs: 2600 },
+        armorFrom: 2,
+        armorHp: 70,
+        armorPerCoin: 0.03,
+        armorResupplyPct: 0.30,
+        coinMagnetR: 200, coinSeekR: 480, coinPickupR: 42,
+      },
+      'dreadnought+': {
+        key: 'dreadnought+', name: 'Дредноут+', base: 'dreadnought',
+        hp: 200, radius: 52, scoreReward: 900,
+        accel: 100, maxSpeed: 105, turnRate: 1.7,
+        fireCooldownMs: 850, bulletSpeed: 400, bulletCount: 3, spread: 0.22,
+        phaseCount: 2, startPhase: 1, phasesAt: [0.5],
+        // фаза 2: очереди по 3 залпа + щит, пополняемый монетами (В3)
+        burstFrom: 2,
+        burst: {
+          volleys: 3, intervalMs: 260, reloadMs: 2600,
+        },
+        armorFrom: 2,
+        armorHp: 70,                  // полоска брони (как у бронированных врагов)
+        armorPerCoin: 0.03,           // 1 монета → +3% макс. брони
+        armorResupplyPct: 0.30,       // ниже 30% брони — ищет монеты, а не стреляет
+        coinMagnetR: 200, coinSeekR: 480, coinPickupR: 42,
+      },
+      'dreadnought++': {
+        key: 'dreadnought++', name: 'Дредноут++', base: 'dreadnought',
+        hp: 270, radius: 54, scoreReward: 1300,
+        accel: 110, maxSpeed: 115, turnRate: 1.8,
+        fireCooldownMs: 800, bulletSpeed: 420, bulletCount: 4, spread: 0.26,
+        // 3 фазы: начинается СРАЗУ со 2-й (очереди + щит), фаза 3 — ускоренные очереди
+        phaseCount: 3, startPhase: 2, phasesAt: [0.33],
+        burstFrom: 2,
+        burst: {
+          volleys: 4, intervalMs: 200, reloadMs: 1900,
+        },
+        armorFrom: 2,
+        armorHp: 110,
+        armorPerCoin: 0.05,
+        armorResupplyPct: 0.30,
+        coinMagnetR: 230, coinSeekR: 520, coinPickupR: 46,
       },
       phantom: {
         key: 'phantom', name: 'Фантом',
@@ -250,13 +303,69 @@ export const BALANCE = {
         accel: 220, maxSpeed: 165, turnRate: 2.8,
         fireCooldownMs: 700, bulletSpeed: 460, bulletCount: 1,
         strafeSpeed: 140,
+        phaseCount: 1,       // базовый — 1 фаза: стрельба + мины
+        mineFrom: 1,
         mineIntervalMs: 5500,
+      },
+      'phantom+': {
+        key: 'phantom+', name: 'Фантом+', base: 'phantom',
+        hp: 340, radius: 46, scoreReward: 1200,
+        accel: 240, maxSpeed: 180, turnRate: 3.0,
+        fireCooldownMs: 650, bulletSpeed: 480, bulletCount: 1,
+        strafeSpeed: 150,
+        phaseCount: 2, startPhase: 1, phasesAt: [0.5],
+        // фаза 2 добавляет телепорт (к минам) — «телепорт+мины»
+        mineFrom: 1,
+        mineIntervalMs: 5200,
+        teleportFrom: 2,
+        teleportIntervalMs: 3200,
+        teleportDist: 430,
+      },
+      'phantom++': {
+        key: 'phantom++', name: 'Фантом++', base: 'phantom',
+        hp: 430, radius: 48, scoreReward: 1700,
+        accel: 260, maxSpeed: 195, turnRate: 3.2,
+        fireCooldownMs: 600, bulletSpeed: 500, bulletCount: 2, spread: 0.3,
+        strafeSpeed: 160,
+        phaseCount: 3, startPhase: 1, phasesAt: [0.66, 0.33],
+        mineFrom: 1,
+        mineIntervalMs: 5000,
+        teleportFrom: 2,
+        teleportIntervalMs: 2800,
+        teleportDist: 460,
+        cloneFrom: 3,
+        clone: { max: 2, intervalMs: 3800, hpFactor: 0.4, radiusFactor: 0.7, lifeMs: 12000 },
       },
       leviathan: {
         key: 'leviathan', name: 'Левиафан',
         hp: 280, radius: 60, scoreReward: 1200,
         accel: 70, maxSpeed: 105, turnRate: 1.2,
         fireCooldownMs: 1200, bulletSpeed: 340, bulletCount: 8, // круговой залп
+        phaseCount: 1, // базовый — 1 фаза: круговой залп
+        spiralFrom: 99,
+      },
+      'leviathan+': {
+        key: 'leviathan+', name: 'Левиафан+', base: 'leviathan',
+        hp: 380, radius: 62, scoreReward: 1600,
+        accel: 80, maxSpeed: 120, turnRate: 1.3,
+        fireCooldownMs: 1050, bulletSpeed: 360, bulletCount: 10,
+        phaseCount: 2, startPhase: 1, phasesAt: [0.5],
+        // фаза 2: спираль + ускорение
+        spiralFrom: 2,
+        spiral: { spinStep: 0.9 },
+        laserFrom: 99,
+      },
+      'leviathan++': {
+        key: 'leviathan++', name: 'Левиафан++', base: 'leviathan',
+        hp: 480, radius: 64, scoreReward: 2200,
+        accel: 90, maxSpeed: 135, turnRate: 1.4,
+        fireCooldownMs: 950, bulletSpeed: 380, bulletCount: 12,
+        phaseCount: 3, startPhase: 1, phasesAt: [0.66, 0.33],
+        spiralFrom: 2,
+        spiral: { spinStep: 1.1 },
+        // фаза 3: лазерные лучи поверх спирали
+        laserFrom: 3,
+        laser: { intervalMs: 4500, durationMs: 1600, width: 12, dps: 26, tickMs: 100, len: 760, count: 2, spinSpan: 1.1 },
       },
     },
   },
@@ -380,12 +489,12 @@ export const BALANCE = {
           { kind: 'comet', intervalMs: 2600, count: 3 },
         ] },
       // 3. Первый охотник: подключается вражеский корабль
-      { durationMs: 13000, cooldownMs: 2200,
+      { durationMs: 13000, cooldownMs: 20200,
         spawns: [
           { kind: 'asteroid', intervalMs: 1100, count: 12,
             composition: { small: 0.50, medium: 0.40, large: 0.10 } },
           { kind: 'comet', intervalMs: 2400, count: 3 },
-          { kind: 'enemy', intervalMs: 9000, count: 1 },
+          { kind: 'enemy', intervalMs: 10000, count: 1 },
         ] },
       // 4. Дредноут с эскортом из комет и охотников
       { durationMs: 15000, cooldownMs: 3000, bosses: ['dreadnought'],
@@ -393,7 +502,7 @@ export const BALANCE = {
           { kind: 'asteroid', intervalMs: 1400, count: 10,
             composition: { small: 0.45, medium: 0.40, large: 0.15 } },
           { kind: 'comet', intervalMs: 2200, count: 4 },
-          { kind: 'enemy', intervalMs: 8000, count: 1 },
+          { kind: 'enemy', intervalMs: 10000, count: 1 },
           { kind: 'armored', intervalMs: 8000, count: 1 },
         ] },
       // 5. Кометный ливень
@@ -443,7 +552,7 @@ export const BALANCE = {
           { kind: 'burst', intervalMs: 6000, count: 2 },
           { kind: 'orbital', intervalMs: 11000, count: 2 },
         ] },
-      // 10. Бесконечный затяжной бой (повторяется) — без босса
+      // 10. Бесконечный затяжной бой (без босса) — пауза перед усиленными боссами
       { durationMs: 15000, cooldownMs: 2500,
         spawns: [
           { kind: 'asteroid', intervalMs: 850, count: 18,
@@ -453,6 +562,54 @@ export const BALANCE = {
           { kind: 'armored', intervalMs: 7000, count: 2 },
           { kind: 'burst', intervalMs: 6500, count: 2 },
           { kind: 'orbital', intervalMs: 12000, count: 1 },
+        ] },
+      // 11. Усиленный Дредноут+ (2 фазы: стандарт → очереди + щит)
+      { durationMs: 15000, cooldownMs: 3000, bosses: ['dreadnought+'],
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1300, count: 12,
+            composition: { small: 0.40, medium: 0.40, large: 0.20 } },
+          { kind: 'comet', intervalMs: 2000, count: 4 },
+          { kind: 'enemy', intervalMs: 8000, count: 2 },
+          { kind: 'armored', intervalMs: 8000, count: 1 },
+        ] },
+      // 12. Усиленный Фантом+ (2 фазы: стрельба → телепорт + мины)
+      { durationMs: 16000, cooldownMs: 3000, bosses: ['phantom+'],
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1100, count: 12,
+            composition: { small: 0.35, medium: 0.40, large: 0.25 } },
+          { kind: 'comet', intervalMs: 1700, count: 5 },
+          { kind: 'enemy', intervalMs: 6500, count: 2 },
+          { kind: 'burst', intervalMs: 7000, count: 1 },
+        ] },
+      // 13. Усиленный Левиафан+ (2 фазы: круг → спираль + ускорение)
+      { durationMs: 18000, cooldownMs: 4000, bosses: ['leviathan+'],
+        spawns: [
+          { kind: 'asteroid', intervalMs: 950, count: 14,
+            composition: { small: 0.30, medium: 0.40, large: 0.30 } },
+          { kind: 'comet', intervalMs: 1400, count: 6 },
+          { kind: 'enemy', intervalMs: 5500, count: 3 },
+          { kind: 'armored', intervalMs: 6000, count: 2 },
+          { kind: 'orbital', intervalMs: 11000, count: 1 },
+        ] },
+      // 14. Осада: Дредноут++ (начинает с фазы 2) + Фантом++
+      { durationMs: 18000, cooldownMs: 4000, bosses: ['dreadnought++', 'phantom++'],
+        spawns: [
+          { kind: 'asteroid', intervalMs: 850, count: 16,
+            composition: { small: 0.30, medium: 0.40, large: 0.30 } },
+          { kind: 'comet', intervalMs: 1300, count: 6 },
+          { kind: 'enemy', intervalMs: 5000, count: 3 },
+          { kind: 'burst', intervalMs: 6000, count: 2 },
+        ] },
+      // 15. Левиафан++ — финал (3 фазы: круг → спираль → лазеры), повторяется
+      { durationMs: 20000, cooldownMs: 4000, bosses: ['leviathan++'],
+        spawns: [
+          { kind: 'asteroid', intervalMs: 800, count: 16,
+            composition: { small: 0.30, medium: 0.40, large: 0.30 } },
+          { kind: 'comet', intervalMs: 1200, count: 7 },
+          { kind: 'enemy', intervalMs: 5000, count: 3 },
+          { kind: 'armored', intervalMs: 5600, count: 2 },
+          { kind: 'burst', intervalMs: 5500, count: 2 },
+          { kind: 'orbital', intervalMs: 10000, count: 2 },
         ] },
     ],
   },

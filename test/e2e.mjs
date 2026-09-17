@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { io } from 'socket.io-client';
 import { createWorld, stepWorld, snapshotOf, selectCard, expThreshold } from '../shared/world.js';
+import { BALANCE } from '../shared/balance.js';
 
 const PORT = 3199;
 const URL = `http://127.0.0.1:${PORT}`;
@@ -211,6 +212,172 @@ try {
       stepN(w, 120);
       ok(!w.asteroids.some((a) => a.id === 9), 'орбитальный уничтожает метеорит на пути');
       ok(w.enemies.some((x) => x.id === 'v4-orb'), 'орбитальный остаётся жив');
+    }
+  }
+
+  // ---- Дредноут (В3): броня → HP, монета восполняет броню, фаза 2, очередь ----
+  {
+    const fresh = () => {
+      const w = createWorld({ playerIds: ['u'], nicknames: { u: 'Unit' }, durationMs: null, seed: 12 });
+      const p = w.players[0];
+      p.lives = 9999;
+      p.invulnUntil = 1e9;
+      return { w, p };
+    };
+    const stepN = (w, n) => {
+      for (let i = 0; i < n; i++) stepWorld(w, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
+    };
+    // 1) броня поглощает урон раньше HP
+    {
+      const { w, p } = fresh();
+      w.bosses.push({
+        id: 'v3-dr', key: 'dreadnought', x: p.x + 120, y: p.y, vx: 0, vy: 0, a: 0,
+        hp: 140, maxHp: 140, armor: 70, maxArmor: 70, phase: 1, phaseFwdAt: 70, fireCdAt: 1e9,
+      });
+      w.bullets.push({ id: 1, x: p.x, y: p.y, vx: 560, vy: 0, a: 0, owner: 'u', born: 0 });
+      stepN(w, 60);
+      const b = w.bosses.find((x) => x.id === 'v3-dr');
+      ok(b && b.hp === 140 && b.armor === 69, 'дредноут: броня поглощает урон раньше HP');
+    }
+    // 2) монета восполняет броню дредноута
+    {
+      const { w, p } = fresh();
+      w.bosses.push({
+        id: 'v3-dr', key: 'dreadnought', x: p.x + 120, y: p.y, vx: 0, vy: 0, a: 0,
+        hp: 140, maxHp: 140, armor: 20, maxArmor: 70, phase: 1, phaseFwdAt: 70, fireCdAt: 1e9,
+      });
+      const b = w.bosses[0];
+      w.coins.push({ id: 2, x: b.x + 40, y: b.y, vx: 0, vy: 0, born: w.t });
+      stepN(w, 10);
+      const b2 = w.bosses.find((x) => x.id === 'v3-dr');
+      ok(b2 && b2.armor > 20, `монета восполняет броню дредноута (было 20, стало ${b2 && b2.armor})`);
+    }
+    // 3) фаза 2 при HP < 50%; 4) в фазе 2 — очередь из 3 залпов по 3 пули
+    {
+      const { w, p } = fresh();
+      w.bosses.push({
+        id: 'v3-dr', key: 'dreadnought', x: p.x + 300, y: p.y, vx: 0, vy: 0, a: 0,
+        hp: 60, maxHp: 140, armor: 0, maxArmor: 0, phase: 1, phaseFwdAt: 70, fireCdAt: 1e9,
+      });
+      // пуля игрока доводит HP ниже 50% → смена фазы при нанесении урона
+      w.bullets.push({ id: 1, x: p.x, y: p.y, vx: 560, vy: 0, a: 0, owner: 'u', born: 0 });
+      stepN(w, 60);
+      const b = w.bosses.find((x) => x.id === 'v3-dr');
+      ok(b && b.phase === 2, 'дредноут переходит в фазу 2 при HP < 50%');
+      // сбрасываем перезарядку и считаем очередь в фазе 2
+      b.fireCdAt = 0;
+      let fired = 0;
+      for (let i = 0; i < 45; i++) {
+        const before = w.bullets.length;
+        stepWorld(w, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
+        fired += Math.max(0, w.bullets.length - before);
+      }
+      const b2 = w.bosses.find((x) => x.id === 'v3-dr');
+      ok(b2 && b2.phase === 2 && fired >= 6 && fired <= 12, `дредноут в фазе 2 стреляет очередью по 3 залпа (пуль: ${fired})`);
+    }
+  }
+
+  // ---- Боссы В1: варианты/фазы, телепорт, клоны, лазеры ----
+  {
+    const fresh = () => {
+      const w = createWorld({ playerIds: ['u'], nicknames: { u: 'Unit' }, durationMs: null, seed: 41 });
+      const p = w.players[0];
+      p.lives = 9999;
+      p.invulnUntil = 1e9;
+      return { w, p };
+    };
+    const stepN = (w, n) => {
+      for (let i = 0; i < n; i++) stepWorld(w, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
+    };
+    const mkBoss = (key, extra) => Object.assign({
+      id: 'v1-b', key, x: 400, y: 300, vx: 0, vy: 0, a: 0,
+      hp: 9999, maxHp: 9999, armor: 0, maxArmor: 0,
+      phase: 1, maxPhase: 1, nextPhaseAt: 0, phaseFwdAt: 0,
+      burstLeft: 0, burstNextAt: 0,
+      fireCdAt: 1e9, mineCdAt: 1e9,
+      tpAt: null, cloneAt: null, spinA: 0, laserAt: null,
+      born: 0,
+    }, extra);
+    // 1) конфиг: 9 вариантов, дредноут++ стартует фазы 2, в волнах есть усиленные версии
+    {
+      const keys = ['dreadnought','dreadnought+','dreadnought++','phantom','phantom+','phantom++','leviathan','leviathan+','leviathan++'];
+      ok(keys.every((k) => BALANCE.bosses.types[k]), 'в balance есть все 9 версий боссов');
+      ok(BALANCE.bosses.types['dreadnought++'].startPhase === 2, 'дредноут++ стартует сразу со 2-й фазы');
+      const bs = BALANCE.waves.list.flatMap((wave) => wave.bosses || []);
+      ok(['dreadnought+','phantom+','leviathan+'].every((k) => bs.includes(k)), 'в поздних волнах есть боссы с +');
+      ok(['dreadnought++','phantom++','leviathan++'].every((k) => bs.includes(k)), 'в поздних волнах есть боссы с ++');
+    }
+    // 2) дредноут++: из фазы 2 в фазу 3 при HP ниже 33%
+    {
+      const { w, p } = fresh();
+      const def = BALANCE.bosses.types['dreadnought++'];
+      const port = def.hp * def.phasesAt[0]; // 33% от максимума
+      w.bosses.push(mkBoss('dreadnought++', { hp: port + 0.5, maxHp: def.hp, phase: 2, maxPhase: 3, nextPhaseAt: port, phaseFwdAt: port, x: p.x + 120, y: p.y }));
+      const b = w.bosses[0];
+      w.bullets.push({ id: 90, x: b.x, y: b.y, vx: 0, vy: 0, a: 0, owner: 'u', born: 0 });
+      stepN(w, 10);
+      const b2 = w.bosses.find((x) => x.id === 'v1-b');
+      ok(b2 && b2.phase === 3, 'дредноут++ переходит в фазу 3 при HP < 33%');
+    }
+    // 3) фантом+ в фазе 2 телепортируется: резкий скачок позиции
+    {
+      const { w, p } = fresh();
+      w.bosses.push(mkBoss('phantom+', { phase: 2, maxPhase: 2, tpAt: 1, x: p.x + 200, y: p.y }));
+      let maxJump = 0;
+      let prev = { x: w.bosses[0].x, y: w.bosses[0].y };
+      for (let i = 0; i < 15; i++) {
+        stepWorld(w, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
+        const b = w.bosses[0];
+        const d = Math.hypot(b.x - prev.x, b.y - prev.y);
+        if (d > maxJump) maxJump = d;
+        prev = { x: b.x, y: b.y };
+      }
+      ok(maxJump > 200, `фантом+ телепортируется в фазе 2 (скачок ${Math.round(maxJump)})`);
+    }
+    // 4) фантом++ в фазе 3 создаёт клонов, убийство клона не даёт наград
+    {
+      const { w, p } = fresh();
+      w.bosses.push(mkBoss('phantom++', { phase: 3, maxPhase: 3, cloneAt: 1, x: p.x + 300, y: p.y }));
+      stepN(w, 120);
+      const clones = w.bosses.filter((x) => x.clone);
+      ok(clones.length >= 1, 'фантом++ в фазе 3 создаёт клонов');
+      if (clones.length) {
+        const c = clones[0];
+        const scoreBefore = p.score;
+        const crystalsBefore = w.crystals.length;
+        c.hp = 0.5;
+        w.bullets.push({ id: 120, x: c.x, y: c.y, vx: 0, vy: 0, a: 0, owner: 'u', born: 0 });
+        stepN(w, 10);
+        const still = w.bosses.find((x) => x.id === c.id);
+        if (!still) {
+          ok(p.score === scoreBefore, 'убийство клона фантома не даёт очков');
+          ok(w.crystals.length === crystalsBefore, 'убийство клона фантома не даёт дропа');
+        }
+      }
+    }
+    // 5) босс-луч левиафана++ наносит урон игроку
+    {
+      const { w, p } = fresh();
+      p.invulnUntil = 0;
+      p.lives = 1000;
+      w.bosses.push(mkBoss('leviathan++', { phase: 3, maxPhase: 3, x: p.x - 600, y: p.y }));
+      const b = w.bosses[0];
+      w.bossLasers.push({ id: 1, bossId: b.id, x: b.x, y: b.y, spin: 0, a: 0, aStart: 0, until: w.t + 4000, nextTick: 0, dps: 26, tickMs: 100, width: 12, len: 760, dead: false });
+      stepN(w, 90);
+      ok(p.lives < 1000, `босс-луч наносит урон игроку (жизни ${p.lives})`);
+    }
+    // 6) god mode: урон игроку не наносится, жизни не тратятся
+    {
+      const w = createWorld({ playerIds: ['u'], nicknames: { u: 'Unit' }, durationMs: null, seed: 41, godMode: true });
+      const p = w.players[0];
+      p.invulnUntil = 0;
+      p.lives = 5;
+      w.bosses.push(mkBoss('leviathan++', { phase: 3, maxPhase: 3, x: 400, y: 300 }));
+      w.bosses[0].x = p.x - 600;
+      w.bossLasers.push({ id: 2, bossId: w.bosses[0].id, x: w.bosses[0].x, y: p.y, spin: 0, a: 0, aStart: 0, until: w.t + 4000, nextTick: 0, dps: 26, tickMs: 100, width: 12, len: 760, dead: false });
+      for (let i = 0; i < 90; i++) stepWorld(w, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
+      ok(p.lives === 5 && p.alive, 'god mode: жизни не тратятся, игрок жив');
+      ok(snapshotOf(w).gm === 1, 'god mode: снапшот несёт флаг gm=1');
     }
   }
 

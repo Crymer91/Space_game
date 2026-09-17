@@ -28,6 +28,7 @@ const FX_COLORS = {
   laser: ['#ff5a66', '#ffb0b8'],
   mine: ['#ffb458', '#ffd08a'],
   levelup: ['#b88bff', '#ffe9a8'],
+  bossphase: ['#ffd75e', '#ffffff', '#9d7dff', '#ff5a66'],
 };
 
 function hashRand(seed) {
@@ -766,23 +767,38 @@ export function createRenderer(canvas) {
       ctx.beginPath(); ctx.moveTo(owner.x, owner.y); ctx.lineTo(x1,y1); ctx.stroke();
     }
 
+    // лазеры боссов (В1: левиафан++)
+    for (const bl of (s.bl || [])) {
+      const len = 760;
+      const x2 = bl.x + Math.cos(bl.a) * len;
+      const y2 = bl.y + Math.sin(bl.a) * len;
+      ctx.strokeStyle = 'rgba(255,70,50,.9)';
+      ctx.shadowColor = '#ff2d2d'; ctx.shadowBlur = 18; ctx.lineWidth = 8;
+      ctx.beginPath(); ctx.moveTo(bl.x, bl.y); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(bl.x, bl.y); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+
     // боссы
     for (const b of (s.bo || [])) {
       const def = BALANCE.bosses.types[b.k];
-      const r = def ? def.radius : 50;
-      const col = b.k==='dreadnought' ? '#ff9d4d' : b.k==='phantom' ? '#9d7dff' : '#4dffc8';
+      const baseKey = (b.k || '').replace(/\++$/, '');
+      const r = b.r || (def ? def.radius : 50);
+      const col = baseKey==='dreadnought' ? '#ff9d4d' : baseKey==='phantom' ? '#9d7dff' : '#4dffc8';
       const inside = b.x + r > 0 && b.x - r < W && b.y + r > 0 && b.y - r < H;
       if (inside) {
         ctx.save();
         ctx.translate(b.x, b.y);
         ctx.rotate(b.a);
+        if (b.cl) ctx.globalAlpha = 0.45; // призрачные клоны фантома
         const pulse = 1 + 0.06*Math.sin(now*3 + b.i);
         ctx.scale(pulse, pulse);
         ctx.fillStyle = '#0f131c';
         ctx.strokeStyle = col;
         ctx.lineWidth = 3;
         ctx.beginPath();
-        const img = BOSS_IMGS[b.k];
+        const img = BOSS_IMGS[baseKey];
         if (img && img.complete && img.naturalWidth > 0) {
           const size = r * 3;
           ctx.save();
@@ -796,12 +812,37 @@ export function createRenderer(canvas) {
           ctx.fillStyle=col; ctx.fillRect(r*0.35, -6, 18,12);
         }
         ctx.restore();
+        ctx.globalAlpha = 1;
         const bw = 74;
         ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(b.x-bw/2, b.y - r -18, bw, 7);
         ctx.fillStyle = b.h/b.hm <0.3 ? '#ff4d4d' : col;
         ctx.fillRect(b.x-bw/2, b.y - r -18, bw*Math.max(0,b.h/b.hm),7);
         ctx.fillStyle='#fff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
         ctx.fillText((def?def.name:b.k).toUpperCase(), b.x, b.y - r -24);
+        // В3: полоска брони (под HP-баром), пополняется монетами — у любого босса со щитом
+        if (b.am > 0) {
+          ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(b.x-bw/2, b.y - r -9, bw, 5);
+          ctx.fillStyle='#4fb6ff';
+          const aratio = Math.max(0, Math.min(1, (b.ar || 0) / b.am));
+          ctx.fillRect(b.x-bw/2, b.y - r -9, bw*aratio, 5);
+        }
+        // В1: индикатор фаз — ромбики под HP-баром (текущая фаза ярче)
+        if (b.mx > 1 && !b.cl) {
+          const fx = b.mx || 1;
+          const step = 12;
+          const x0 = b.x - ((fx - 1) * step) / 2;
+          for (let i = 1; i <= fx; i++) {
+            const active = i <= (b.ph || 1);
+            ctx.fillStyle = active ? '#ffd75e' : 'rgba(255,255,255,.25)';
+            ctx.beginPath();
+            ctx.moveTo(x0 + (i - 1) * step, b.y - r - 2);
+            ctx.lineTo(x0 + (i - 1) * step + 4, b.y - r - 7);
+            ctx.lineTo(x0 + (i - 1) * step + 8, b.y - r - 2);
+            ctx.lineTo(x0 + (i - 1) * step + 4, b.y - r + 3);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
       } else {
         const cx = Math.max(r, Math.min(W - r, b.x));
         const cy = Math.max(r, Math.min(H - r, b.y));
@@ -944,6 +985,7 @@ export function createRenderer(canvas) {
     timer: document.getElementById('timerText'),
     timerSub: document.getElementById('timerSub'),
     abilityBar: document.getElementById('abilityBar'),
+    godBadge: document.getElementById('godModeBadge'),
     upgBtns: [...document.querySelectorAll('.upg-btn')],
   };
   const hudCache = {};
@@ -1039,6 +1081,8 @@ export function createRenderer(canvas) {
       if (hudEls.timer.textContent !== timerText) hudEls.timer.textContent = timerText;
       const sub = opts.subText || (opts.solo ? 'время полёта' : 'до конца матча');
       if (hudEls.timerSub.textContent !== sub) hudEls.timerSub.textContent = sub;
+
+      if (hudEls.godBadge) hudEls.godBadge.classList.toggle('hidden', !s.gm);
 
       // способности и временные пауэр-апы
       if (hudEls.abilityBar) {

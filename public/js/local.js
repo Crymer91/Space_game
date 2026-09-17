@@ -30,14 +30,16 @@ export function grantSoloModule(key) {
   return st;
 }
 
-export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult, modules }) {
+export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult, modules, godMode = false }) {
   hideCardPicker();
+  const urlGodMode = /[?&]godMode=1(?=&|$)/.test(location.search);
   const world = createWorld({
     playerIds: ['you'],
     nicknames: { you: nickname || 'Пилот' },
     durationMs: null, // бесконечно, пока живы
     seed: (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0,
     modulesByPlayer: { you: modules },
+    godMode: godMode || urlGodMode,
   });
   // убийство Фантома разблокирует модуль «Ракеты» в solo-банке
   world.onModuleUnlock = (playerId, key) => {

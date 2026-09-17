@@ -44,6 +44,22 @@ let current = null; // { mode: 'solo'|'multi', controller }
 let selfId = null;
 let overShown = false;
 let lastMode = null;
+let serverGodMode = false;
+let serverConfigLoaded = false;
+
+// god mode из .env / GOD_MODE=1 на сервере работает и в соло (страница отдаётся сервером)
+async function loadServerConfig() {
+  if (serverConfigLoaded) return;
+  try {
+    const r = await fetch('/config', { cache: 'no-store' });
+    if (r.ok) {
+      const c = await r.json();
+      serverGodMode = !!(c && c.godMode);
+    }
+  } catch {}
+  serverConfigLoaded = true;
+}
+loadServerConfig();
 
 // ===================== ЗВУК (WebAudio, без файлов) =====================
 let audioCtx = null;
@@ -104,6 +120,15 @@ renderer.onFx((f, state) => {
     else showAnnounce(f.z === 2 ? '⚠ ВРАЖЕСКИЕ КОРАБЛИ!' : '⚠ СКОРОСТНЫЕ КОМЕТЫ!');
     tone({ type: 'sawtooth', from: 620, to: 330, dur: 0.42, vol: 0.12 });
     setTimeout(() => tone({ type: 'sawtooth', from: 620, to: 330, dur: 0.42, vol: 0.12 }), 500);
+    return;
+  }
+  // В1: смена фазы босса — глобальное объявление + сигнал
+  if (f.tp === 'bossphase') {
+    const def = (f.k && BALANCE.bosses.types[f.k]) || null;
+    const name = def ? def.name : 'БОСС';
+    showAnnounce('⚡ ' + name.toUpperCase() + ' — ФАЗА ' + f.z + '!');
+    tone({ type: 'sawtooth', from: 190, to: 90, dur: 0.5, vol: 0.18 });
+    setTimeout(() => tone({ type: 'sawtooth', from: 300, to: 140, dur: 0.6, vol: 0.18 }), 260);
     return;
   }
   // приглушение по расстоянию до своего корабля + защита от звукового шторма
@@ -273,7 +298,8 @@ async function tryBuy(track) {
   onBuyResult(res);
 }
 
-function startSolo() {
+async function startSolo() {
+  await loadServerConfig();
   stopGame();
   lastMode = 'solo';
   selfId = 'you';
@@ -286,6 +312,7 @@ function startSolo() {
       input,
       nickname: els.nickInput.value.trim(),
       modules: loadSoloModules(),
+      godMode: serverGodMode,
       onBuyResult,
       onOver: async (results) => {
         if (isConnected()) {

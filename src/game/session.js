@@ -31,6 +31,7 @@ export class GameSession {
       durationMs: config.matchDurationMs,
       seed: Date.now() ^ (Math.random() * 0xffffffff),
       modulesByPlayer,
+      godMode: config.godMode,
     });
     // модуль «Ракеты» разблокируется с Фантома в аккаунте (Б1; Ангар появится в Б2).
     // До появления ангара разблокировка сразу активирует модуль.

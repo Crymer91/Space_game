@@ -41,6 +41,12 @@ httpServer.on('request', async (req, res) => {
       return res.end(JSON.stringify({ ok: true, uptimeSec: Math.round((Date.now() - startedAt) / 1000) }));
     }
 
+    // публичные настройки для браузерного клиента (например, god mode из .env)
+    if (pathname === '/config') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      return res.end(JSON.stringify({ godMode: config.godMode }));
+    }
+
     const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
     const baseDir = relative.startsWith('shared/') ? sharedDir : publicDir;
     const cleanRelative = relative.startsWith('shared/') ? relative.slice('shared/'.length) : relative;
