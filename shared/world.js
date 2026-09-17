@@ -83,6 +83,8 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
     waveSpawns: {},
     pendingComets: [],
     nextPendingCometId: 1,
+    pendingBosses: [],      // В2: боссы, которых ещё надо ввести (после warnMs)
+    nextPendingBossId: 1,
     nextAsteroidId: 1,
     nextBulletId: 1,
     nextCoinId: 1,
@@ -1228,6 +1230,47 @@ function bossNextPhaseAt(def, phase) {
   return ths.length && i < ths.length ? ths[i] * def.hp : 0;
 }
 
+// В2: «гудок-волна» — радиально выталкивает игрока и объекты от точки появления
+// босса (x, y); действует сразу после появления предупреждения, до фактического
+// спавна. Сила затухает по расстоянию; тяжёлые объекты смещаются меньше.
+export function forcePush(world, x, y, radius, strength) {
+  const push = (dx, dy, mass) => {
+    const d = Math.hypot(dx, dy);
+    if (d >= radius || d < 0.01) return null;
+    const fall = 1 - d / radius;
+    return { nx: (dx / d) * strength * fall / mass, ny: (dy / d) * strength * fall / mass };
+  };
+  const applyTo = (o, mass) => {
+    const p = push(o.x - x, o.y - y, mass);
+    if (!p) return;
+    o.vx += p.nx;
+    o.vy += p.ny;
+  };
+  for (const pl of world.players) {
+    if (pl.out || !pl.alive) continue;
+    applyTo(pl, 1.1);
+  }
+  for (const a of world.asteroids) {
+    if (a.dead) continue;
+    applyTo(a, a.type === 'comet' ? 2.2 : 1.4);
+  }
+  for (const e of world.enemies) {
+    if (e.dead) continue;
+    applyTo(e, 1.4);
+  }
+  for (const c of world.coins) applyTo(c, 0.8);
+}
+
+// Ребро-точка на кромке стороны входа босса — там рисуем серию мигающих значков.
+function warnEdgePoint(world, side) {
+  const w = B.world.width;
+  const h = B.world.height;
+  if (side === 0) return { x: w / 2, y: 42 };
+  if (side === 1) return { x: w - 42, y: h / 2 };
+  if (side === 2) return { x: w / 2, y: h - 42 };
+  return { x: 42, y: h / 2 };
+}
+
 function spawnBoss(world, key) {
   const def = bossDef(key);
   if (!def) return;
@@ -1250,6 +1293,30 @@ function spawnBoss(world, key) {
   else if (side === 2) { x = rand(world.rng, 0, w); y = h + margin; }
   else { x = -margin; y = rand(world.rng, 0, h); }
   const a = Math.atan2(h / 2 - y, w / 2 - x);
+  // В2: ставим босса в очередь появления с задержкой warnMs; сразу гудок-волна
+  // выталкивает игрока и объекты от точки входа, плюс серия мигающих значков.
+  const warnMs = B.bosses.warnMs || 2000;
+  const ept = warnEdgePoint(world, side);
+  forcePush(world, x, y, B.bosses.hornRadius || 520, B.bosses.hornStrength || 460);
+  addFx(world, 'warning', ept.x, ept.y, 3, { k: key, side });
+  world.pendingBosses.push({
+    id: world.nextPendingBossId++,
+    key,
+    side,
+    x,
+    y,
+    a,
+    at: world.t + warnMs,
+    warnX: ept.x,
+    warnY: ept.y,
+  });
+}
+
+// Фактический ввод босса на арену (после warnMs) — выделено из spawnBoss для В2.
+function enterBoss(world, pb) {
+  const def = bossDef(pb.key);
+  if (!def) return;
+  const { x, y, a, side, key } = pb;
   const startPhase = def.startPhase || 1;
   const maxPhase = def.maxPhase || def.phaseCount || 1;
   const nextPhaseAt = bossNextPhaseAt(def, startPhase);
@@ -1277,10 +1344,7 @@ function spawnBoss(world, key) {
     world.bossSpawnedKeys[key] = true;
     world.bossesFought++;
   }
-  const warnX = side === 0 ? w / 2 : side === 2 ? w / 2 : side === 1 ? w - 40 : 40;
-  const warnY = side === 0 ? 40 : side === 2 ? h - 40 : h / 2;
-  addFx(world,'warning', warnX, warnY, 3, { k: key });
-  addFx(world,'spawn', x, y, 3);
+  addFx(world, 'spawn', x, y, 3);
 }
 
 // Клон Фантома (фаза 3 у phantom++): ослабленный призрак с ограниченным временем жизни.
@@ -1915,6 +1979,15 @@ export function stepWorld(world, dtSec, inputs) {
     }
   }
 
+  // --- В2: отсроченные боссы: значки-предупреждение показаны, теперь реальный вход ---
+  for (let i = world.pendingBosses.length - 1; i >= 0; i--) {
+    const pb = world.pendingBosses[i];
+    if (now >= pb.at) {
+      enterBoss(world, pb);
+      world.pendingBosses.splice(i, 1);
+    }
+  }
+
   // --- столкновения: пули (игроков и врагов) × астероиды и кометы ---
   for (const b of world.bullets) {
     if (b.dead) continue;
@@ -2482,6 +2555,14 @@ export function snapshotOf(world) {
       vy: Math.round(pc.vy),
       r: Math.round(pc.r),
       t: Math.round(Math.max(0, pc.at - world.t)),
+    })),
+    pb: world.pendingBosses.map((pb) => ({
+      i: pb.id,
+      k: pb.key,
+      s: pb.side,
+      x: Math.round(pb.warnX),
+      y: Math.round(pb.warnY),
+      t: Math.round(Math.max(0, pb.at - world.t)),
     })),
     pu: world.powerups.map((u)=>({ i:u.id, tp:u.tp, x:Math.round(u.x), y:Math.round(u.y) })),
     bo: world.bosses.map((b)=>({ i:b.id, k:b.key, x:Math.round(b.x*10)/10, y:Math.round(b.y*10)/10, a:Math.round(b.a*100)/100, h:b.hp, hm:b.maxHp, ar:b.armor != null ? Math.round(b.armor*10)/10 : undefined, am:b.maxArmor||undefined, ph:b.phase || undefined, mx:b.maxPhase||undefined, cl:b.clone?1:undefined, r:b.r ? Math.round(b.r) : undefined })),

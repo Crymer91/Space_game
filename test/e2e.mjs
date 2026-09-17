@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { io } from 'socket.io-client';
-import { createWorld, stepWorld, snapshotOf, selectCard, expThreshold } from '../shared/world.js';
+import { createWorld, stepWorld, snapshotOf, selectCard, expThreshold, forcePush } from '../shared/world.js';
 import { BALANCE } from '../shared/balance.js';
 
 const PORT = 3199;
@@ -378,6 +378,50 @@ try {
       for (let i = 0; i < 90; i++) stepWorld(w, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
       ok(p.lives === 5 && p.alive, 'god mode: жизни не тратятся, игрок жив');
       ok(snapshotOf(w).gm === 1, 'god mode: снапшот несёт флаг gm=1');
+    }
+  }
+
+  // ---- В2: гудок-волна (forcePush) + отложенный спавн босса ----
+  {
+    const fresh = () => {
+      const w = createWorld({ playerIds: ['u'], nicknames: { u: 'Unit' }, durationMs: null, seed: 12 });
+      const p = w.players[0];
+      p.lives = 9999;
+      p.invulnUntil = 1e9;
+      return { w, p };
+    };
+    const stepN = (w, n) => {
+      for (let i = 0; i < n; i++) stepWorld(w, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
+    };
+    // 1) forcePush: объект в радиусе получает импульс от точки входа
+    {
+      const { w, p } = fresh();
+      const coin = { id: 99, x: p.x + 400, y: p.y, vx: 0, vy: 0, born: 0 };
+      w.coins.push(coin);
+      forcePush(w, p.x, p.y, 520, 460);
+      ok(coin.vx > 0, 'forcePush: монета отталкивается от эпицентра волны');
+      const coin2 = { id: 100, x: p.x + 600, y: p.y, vx: 0, vy: 0, born: 0 };
+      w.coins.push(coin2);
+      forcePush(w, p.x, p.y, 520, 460);
+      ok(coin2.vx === 0, 'forcePush: объект за пределами радиуса не затронут');
+    }
+    // 2) отложенный спавн: босс появляется после warnMs
+    {
+      const { w, p } = fresh();
+      const waveIndex = 2; // после ++ станет 3 → волна с боссом dreadnought
+      w.waveIndex = waveIndex;
+      w.wavePhase = 'cooldown';
+      w.waveTimer = 0;
+      stepN(w, 1);
+      ok(w.pendingBosses.length === 1, 'после старта волны — босс в очереди предупреждения');
+      ok(w.bosses.length === 0, 'босс ещё не появился');
+      const s = snapshotOf(w);
+      ok(s.pb && s.pb.length === 1, 'снапшот содержит pb (значки предупреждения)');
+      ok(s.pb[0].k === 'dreadnought', 'pb ключ совпадает с ключом босса');
+      stepN(w, 125); // > warnMs (2000ms)
+      ok(w.pendingBosses.length === 0, 'очередь предупреждений пуста после входа');
+      ok(w.bosses.length === 1, 'босс появился после warnMs');
+      ok(w.bosses[0].key === 'dreadnought', 'появился дредноут');
     }
   }
 

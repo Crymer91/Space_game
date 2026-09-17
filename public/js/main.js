@@ -118,8 +118,14 @@ renderer.onFx((f, state) => {
       showAnnounce('☠ БОСС ' + ((def ? def.name : f.k) + '').toUpperCase() + '!');
     } else if (f.z >= 3) showAnnounce(f.z===3?'☠ БОСС ДРЕДНОУТ!':f.z===4?'☠ БОСС ФАНТОМ!':'☠ БОСС ЛЕВИАФАН!');
     else showAnnounce(f.z === 2 ? '⚠ ВРАЖЕСКИЕ КОРАБЛИ!' : '⚠ СКОРОСТНЫЕ КОМЕТЫ!');
-    tone({ type: 'sawtooth', from: 620, to: 330, dur: 0.42, vol: 0.12 });
-    setTimeout(() => tone({ type: 'sawtooth', from: 620, to: 330, dur: 0.42, vol: 0.12 }), 500);
+    if (f.k) {
+      // В2: двойной низкий гудок перед появлением босса
+      tone({ type: 'sawtooth', from: 110, to: 55, dur: 0.65, vol: 0.2 });
+      setTimeout(() => tone({ type: 'sawtooth', from: 110, to: 55, dur: 0.65, vol: 0.2 }), 620);
+    } else {
+      tone({ type: 'sawtooth', from: 620, to: 330, dur: 0.42, vol: 0.12 });
+      setTimeout(() => tone({ type: 'sawtooth', from: 620, to: 330, dur: 0.42, vol: 0.12 }), 500);
+    }
     return;
   }
   // В1: смена фазы босса — глобальное объявление + сигнал

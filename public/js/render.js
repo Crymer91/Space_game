@@ -496,6 +496,71 @@ export function createRenderer(canvas) {
       ctx.restore();
     }
 
+    const WARN_ICON_COLOR = { dreadnought: '#ff9d4d', phantom: '#9d7dff', leviathan: '#4dffc8' };
+
+    // В2: предупреждение о боссе — серия мигающих значков на стороне входа
+    for (const pb of (s.pb || [])) {
+      const baseKey = (pb.k || '').replace(/\++$/, '');
+      const col = WARN_ICON_COLOR[baseKey] || '#ff9d4d';
+      const n = BALANCE.bosses.warnIcons || 4;
+      const inward = {
+        0: Math.PI / 2,   // сверху — вниз
+        1: Math.PI,       // справа — влево
+        2: -Math.PI / 2,  // снизу — вверх
+        3: 0,             // слева — вправо
+      }[pb.s] ?? 0;
+      const off0 = -Math.floor(n / 2);
+      for (let k = 0; k < n; k++) {
+        const idx = off0 + k;
+        const dx = (pb.s === 0 || pb.s === 2) ? 0 : idx * 38;
+        const dy = (pb.s === 0 || pb.s === 2) ? idx * 38 : 0;
+        const x = pb.x + dx;
+        const y = pb.y + dy;
+        const urgent = pb.t < 600 ? (now % 0.25) < 0.13 : (now % 0.5) < 0.25;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(inward);
+        ctx.globalAlpha = urgent ? 0.95 : 0.3;
+        ctx.fillStyle = col;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.shadowColor = col;
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.moveTo(30, 0);
+        ctx.lineTo(0, -13);
+        ctx.lineTo(11, 0);
+        ctx.lineTo(0, 13);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(20, 0);
+        ctx.lineTo(7, -6);
+        ctx.lineTo(11, 0);
+        ctx.lineTo(7, 6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      // имя босса рядом со значками
+      const def = (pb.k && BALANCE.bosses.types[pb.k]) || null;
+      if (def) {
+        ctx.save();
+        ctx.font = 'bold 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = col;
+        ctx.shadowColor = col;
+        ctx.shadowBlur = 8;
+        const labelX = pb.s === 1 ? pb.x - 64 : pb.s === 3 ? pb.x + 64 : pb.x;
+        const labelY = pb.s === 0 ? pb.y + 78 : pb.s === 2 ? pb.y - 58 : pb.y + 5;
+        ctx.fillText((def.name + '').toUpperCase(), labelX, labelY);
+        ctx.restore();
+      }
+    }
+
     // пули (вражеские — красные)
     ctx.lineCap = 'round';
     for (const b of s.bs) {
