@@ -43,6 +43,7 @@ export function upsertPlayer(db, playerId, nickname) {
     db.data.players[playerId] = {
       nickname, createdAt: now, lastSeenAt: now,
       bestScore: 0, coinsSolo: 0, coinsMulti: 0,
+      bestScoreSolo: 0, bestScoreMulti: 0,
       moduleState: {}, // { solo: {...}, multi: {...} } — состояние модулей (см. раздел «модули»)
     };
   } else {
@@ -51,6 +52,9 @@ export function upsertPlayer(db, playerId, nickname) {
     if (p.coinsSolo == null) p.coinsSolo = 0;
     if (p.coinsMulti == null) p.coinsMulti = 0;
     if (p.moduleState == null) p.moduleState = {};
+    // миграция старых профилей на раздельные рекорды режимов (Е1)
+    if (p.bestScoreSolo == null) p.bestScoreSolo = p.bestScore || 0;
+    if (p.bestScoreMulti == null) p.bestScoreMulti = 0;
   }
   db.flush();
 }
@@ -68,6 +72,8 @@ export function getPlayerStats(db, playerId) {
   return {
     played, wins,
     bestScore: p?.bestScore ?? 0,
+    bestScoreSolo: p?.bestScoreSolo ?? p?.bestScore ?? 0,
+    bestScoreMulti: p?.bestScoreMulti ?? 0,
     coinsSolo: p?.coinsSolo ?? 0,
     coinsMulti: p?.coinsMulti ?? 0,
     modules,
@@ -153,11 +159,15 @@ export function upgradeModule(db, playerId, mode, key, level, cost) {
   return { ok: true, level: st.levels[key], stats: getPlayerStats(db, playerId) };
 }
 
-// Сохраняет рекорд одиночной игры (если побит) и возвращает обновлённую статистику
+// Сохраняет рекорд режима (solo/multi) и возвращает обновлённую статистику.
+// Рекорды разделены по режимам (bestScoreSolo/bestScoreMulti); агрегированный
+// bestScore всегда равен лучшему из них (обратная совместимость).
 export function submitScore(db, playerId, score, { mode = 'solo', coins = 0 } = {}) {
   const p = db.data.players[playerId];
   if (p) {
-    p.bestScore = Math.max(p.bestScore || 0, score);
+    const field = mode === 'multi' ? 'bestScoreMulti' : 'bestScoreSolo';
+    p[field] = Math.max(p[field] || 0, score);
+    p.bestScore = Math.max(p.bestScore || 0, p[field]);
     if (Number.isFinite(coins) && coins > 0) {
       addCoins(db, playerId, mode, coins); // flush внутри
     } else {
@@ -166,6 +176,56 @@ export function submitScore(db, playerId, score, { mode = 'solo', coins = 0 } = 
     }
   }
   return getPlayerStats(db, playerId);
+}
+
+// --- рейтинги (Е1): разделы «Solo по очкам», «Multi по очкам», «Coins по банку» -------------
+
+export const LEADERBOARD_MODES = ['solo', 'multi', 'coins'];
+
+export function isValidLeaderboardMode(mode) {
+  return LEADERBOARD_MODES.includes(mode);
+}
+
+// Значение игрока в разделе рейтинга.
+//   solo  — лучший результат одиночного режима,
+//   multi — лучший результат мультиплеера,
+//   coins — суммарный банк монет (solo+multi).
+function leaderboardScore(p, mode) {
+  if (mode === 'multi') return p.bestScoreMulti ?? p.bestScore ?? 0;
+  if (mode === 'coins') return (p.coinsSolo || 0) + (p.coinsMulti || 0);
+  return p.bestScoreSolo ?? p.bestScore ?? 0;
+}
+
+function leaderboardRows(db, mode) {
+  return Object.entries(db.data.players)
+    .map(([playerId, p]) => ({
+      playerId,
+      nickname: p.nickname || playerId,
+      score: leaderboardScore(p, mode),
+    }))
+    // детерминированный порядок: по очкам убыв., при равенстве — кто раньше создан выше
+    .sort((a, b) => {
+      const ps = db.data.players[a.playerId];
+      const qs = db.data.players[b.playerId];
+      return b.score - a.score || (ps.createdAt - qs.createdAt) || a.playerId.localeCompare(b.playerId);
+    });
+}
+
+// Топ-N игроков раздела (топ-10 / топ-100; limit зажимается в 1..100).
+export function getTopPlayers(db, mode, limit = 10) {
+  const n = Math.max(1, Math.min(100, Math.floor(limit) || 10));
+  return leaderboardRows(db, mode).slice(0, n);
+}
+
+// Позиция игрока в разделе + 4 соседних результата (2 выше / 2 ниже; строки короче у краёв).
+export function getLeaderboard(db, mode, playerId) {
+  const rows = leaderboardRows(db, mode);
+  const total = rows.length;
+  const idx = rows.findIndex((r) => r.playerId === playerId);
+  if (idx === -1) return { rank: null, total, entries: [] };
+  const from = Math.max(0, idx - 2);
+  const to = Math.min(total, idx + 3);
+  return { rank: idx + 1, total, entries: rows.slice(from, to) };
 }
 
 export function saveMatch(db, { id, roomCode, capacity, players, winner, createdAt, endedAt }) {

@@ -1,4 +1,4 @@
-import { getPlayerStats, getModules, submitScore, upsertPlayer, unlockModule, setModuleActive, upgradeModule } from './db.js';
+import { getPlayerStats, getModules, submitScore, upsertPlayer, unlockModule, setModuleActive, upgradeModule, getTopPlayers, getLeaderboard, isValidLeaderboardMode } from './db.js';
 import { BALANCE } from '../shared/balance.js';
 import { moduleCost } from '../shared/world.js';
 
@@ -216,6 +216,31 @@ export function registerHandlers(io, { db, config, roomManager, matchmaking, gam
       const res = upgradeModule(db, socket.data.player.playerId, mode, key, level, cost);
       if (res.error) return fail(ack, res.error, `Cannot upgrade module: ${res.error}`);
       if (typeof ack === 'function') ack({ ok: true, data: res.stats });
+    }));
+
+    // --- рейтинги (Е1): разделы solo / multi / coins.
+    //     leaderboard:rank — позиция игрока + 4 соседних результата (2 выше/2 ниже);
+    //     leaderboard:top  — топ-N игроков (топ-10 / топ-100 по limit). ---
+    socket.on('leaderboard:rank', requireAuth((payload = {}, ack) => {
+      const mode = String(payload.mode || 'solo').toLowerCase();
+      if (!isValidLeaderboardMode(mode)) {
+        return fail(ack, 'invalid-mode', `Unknown leaderboard mode: '${mode}'`);
+      }
+      const data = getLeaderboard(db, mode, socket.data.player.playerId);
+      if (typeof ack === 'function') ack({ ok: true, data });
+    }));
+
+    socket.on('leaderboard:top', requireAuth((payload = {}, ack) => {
+      const mode = String(payload.mode || 'solo').toLowerCase();
+      if (!isValidLeaderboardMode(mode)) {
+        return fail(ack, 'invalid-mode', `Unknown leaderboard mode: '${mode}'`);
+      }
+      const limit = payload.limit == null ? 10 : Math.floor(Number(payload.limit));
+      if (!Number.isFinite(limit) || limit <= 0) {
+        return fail(ack, 'invalid-limit', 'limit must be a positive number');
+      }
+      const data = { mode, top: getTopPlayers(db, mode, limit) };
+      if (typeof ack === 'function') ack({ ok: true, data });
     }));
 
     socket.on('disconnect', () => {

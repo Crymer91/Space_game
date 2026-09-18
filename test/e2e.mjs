@@ -7,6 +7,7 @@ import path from 'node:path';
 import { io } from 'socket.io-client';
 import { createWorld, stepWorld, snapshotOf, selectCard, expThreshold, forcePush } from '../shared/world.js';
 import { BALANCE } from '../shared/balance.js';
+import { createDb, upsertPlayer, submitScore, getTopPlayers, getLeaderboard } from '../src/db.js';
 
 const PORT = 3199;
 const URL = `http://127.0.0.1:${PORT}`;
@@ -116,6 +117,91 @@ try {
     'уровень модуля ракеты растёт (0 → 1)');
   const modUpMulti = await emitAck(a, 'module:upgrade', { key: 'rockets', mode: 'multi' });
   ok(modUpMulti?.error === 'not-unlocked', 'банк мультиплеера независим от solo');
+
+  // ---- Рейтинги (Е1): сокет-ивенты leaderboard:top / leaderboard:rank ----
+  const lbTop = await emitAck(a, 'leaderboard:top', { mode: 'solo' });
+  ok(lbTop?.ok && lbTop.data.top && lbTop.data.top[0]?.playerId === 'e2e-alpha'
+    && lbTop.data.top[0]?.score >= 2000, 'leaderboard:top: альфа сверху в solo (рекорд 2000)');
+  ok(lbTop.data.top.some((r) => r.playerId === 'e2e-beta'), 'leaderboard:top: бета тоже в таблице');
+  const lbTop100 = await emitAck(a, 'leaderboard:top', { mode: 'solo', limit: 100 });
+  ok(lbTop100?.ok && lbTop100.data.top.length === lbTop.data.top.length, 'leaderboard:top принимает limit (топ-100)');
+  const lbRank = await emitAck(a, 'leaderboard:rank', { mode: 'solo' });
+  ok(lbRank?.ok && lbRank.data.rank >= 1
+    && lbRank.data.entries.some((r) => r.playerId === 'e2e-alpha' && r.score >= 2000),
+    'leaderboard:rank: позиция альфы + её строка среди соседей');
+  ok(lbRank.data.entries.length <= 5, 'leaderboard:rank возвращает не больше 5 строк (2 выше/я/2 ниже)');
+  const lbCoins = await emitAck(a, 'leaderboard:rank', { mode: 'coins' });
+  ok(lbCoins?.ok && lbCoins.data.entries.some((r) => r.playerId === 'e2e-alpha' && r.score > 0),
+    'leaderboard:rank: раздел coins считает банк монет');
+  const lbBadMode = await emitAck(a, 'leaderboard:top', { mode: 'nope' });
+  ok(lbBadMode?.error === 'invalid-mode', 'неизвестный раздел рейтинга отклоняется');
+  const lbBadLimit = await emitAck(a, 'leaderboard:top', { mode: 'solo', limit: 0 });
+  ok(lbBadLimit?.error === 'invalid-limit', 'недопустимый limit отклоняется');
+  const lbNoAuth = await new Promise((resolve) => {
+    const c = io(URL, { transports: ['websocket'] });
+    c.on('connect', async () => {
+      resolve(await emitAck(c, 'leaderboard:rank', { mode: 'solo' }));
+      c.disconnect();
+    });
+  });
+  ok(lbNoAuth?.error === 'not-authorized', 'leaderboard:rank без auth отклоняется');
+
+  // ---- Рейтинги (Е1): разделы, соседи и раздельные рекорды — на живом хранилище (в процессе) ----
+  {
+    const rankDir = mkdtempSync(path.join(tmpdir(), 'ab-rank-'));
+    const rankDb = createDb(path.join(rankDir, 'rank.db'));
+    try {
+      // регистрируем 7 игроков; рекорды solo: p7=200, p2=100, p4=50, p1=30, p3=20, p5=10, p6=0
+      for (const [id, nick] of [...'1234567'].map((n, i) => [`p${n}`, `Player${n}`])) upsertPlayer(rankDb, id, nick);
+      submitScore(rankDb, 'p7', 200, { mode: 'solo' });
+      submitScore(rankDb, 'p2', 100, { mode: 'solo' });
+      submitScore(rankDb, 'p4', 50, { mode: 'solo' });
+      submitScore(rankDb, 'p1', 30, { mode: 'solo' });
+      submitScore(rankDb, 'p3', 20, { mode: 'solo' });
+      submitScore(rankDb, 'p5', 10, { mode: 'solo' });
+      submitScore(rankDb, 'p6', 0, { mode: 'solo' });
+
+      const topSolo = getTopPlayers(rankDb, 'solo', 10).map((r) => r.playerId);
+      ok(topSolo.join(',') === 'p7,p2,p4,p1,p3,p5,p6',
+        `топ-10 solo отсортирован по убыванию (${topSolo.join(',')})`);
+      ok(getTopPlayers(rankDb, 'solo', 100).length === 7, 'топ-100 включает всех игроков');
+      ok(getTopPlayers(rankDb, 'solo', 3).length === 3, 'топ с limit работает');
+
+      // раздельные рекорды режимов: multi прокачка не трогает solo
+      const st = submitScore(rankDb, 'p1', 999, { mode: 'multi' });
+      ok(st.bestScoreMulti === 999 && st.bestScoreSolo === 30 && st.bestScore === 999,
+        'рекорды solo/multi раздельны, агрегированный bestScore = максимум');
+
+      const born = getTopPlayers(rankDb, 'multi', 10);
+      ok(born[0].playerId === 'p1' && born[0].score === 999, 'раздел multi считан из bestScoreMulti');
+
+      // плюс 12 монет p3 → раздел coins ранжит по суммарному банку
+      submitScore(rankDb, 'p3', 5, { mode: 'solo', coins: 12 });
+      const topCoins = getTopPlayers(rankDb, 'coins', 10);
+      ok(topCoins[0].playerId === 'p3' && topCoins[0].score === 12, 'раздел coins ранжит по банку (solo+multi)');
+
+      // позиция + 4 соседа (2 выше / 2 ниже) — p1 (30) на 4-м месте
+      const lb = getLeaderboard(rankDb, 'solo', 'p1');
+      ok(lb.rank === 4 && lb.total === 7
+        && lb.entries.map((r) => r.playerId).join(',') === 'p2,p4,p1,p3,p5',
+        'позиция + 4 соседних результата (2 выше/2 ниже)');
+      // края таблицы: лидер — только соседи снизу, аутсайдер — только сверху
+      const lbTop2 = getLeaderboard(rankDb, 'solo', 'p7');
+      ok(lbTop2.rank === 1 && lbTop2.entries.length === 3 && lbTop2.entries[0].playerId === 'p7',
+        'у лидера 2 строки снизу (всего 3)');
+      const lbBot = getLeaderboard(rankDb, 'solo', 'p6');
+      ok(lbBot.rank === 7 && lbBot.entries.length === 3 && lbBot.entries[2].playerId === 'p6',
+        'у аутсайдера 2 строки сверху (всего 3)');
+      // равенство очков: нулевой банк упорядочен детерминированно (кто раньше создан — выше);
+      // p3 (12 монет) на 1-м месте → для p7 ранг 7
+      const lbTie = getLeaderboard(rankDb, 'coins', 'p7');
+      ok(lbTie.rank === 7 && lbTie.entries.map((r) => r.playerId).join(',') === 'p5,p6,p7',
+        `равные очки отсортированы по дате создания (p7 ранг ${lbTie.rank})`);
+    } finally {
+      rankDb.close();
+      rmSync(rankDir, { recursive: true, force: true });
+    }
+  }
 
   // ---- карточки уровня (А3): сервер принимает выбор только по pending карточкам ----
   const cardNo = await emitAck(a, 'card:select', { cardId: 'damage' });
