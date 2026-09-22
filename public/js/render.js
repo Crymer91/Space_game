@@ -16,6 +16,12 @@ BOSS_IMGS.leviathan = new Image();
 BOSS_IMGS.leviathan.src = '/img/enemies/leviathan.png';
 
 const SLOT_COLORS = ['#5ad0ff', '#ffb458', '#7dff9e', '#ff8ad8'];
+
+// Косметика корабля (Б2): описание по ключу из снапшота (p.co)
+function cosmeticDef(key) {
+  if (!key || key === 'default') return null;
+  return (BALANCE.hangar?.cosmetics || []).find((c) => c.key === key) || null;
+}
 const FX_COLORS = {
   boom: ['#ffd75e', '#ff9d4d', '#ff6b4a'],
   hit: ['#ffffff', '#ffe9a8'],
@@ -941,11 +947,32 @@ export function createRenderer(canvas) {
       ctx.save();
       ctx.translate(p.x, p.y);
       ctx.globalAlpha = blink ? 0.28 : 1;
+
+      // косметика (Б2): цветовая подсветка / неоновое свечение вокруг корабля
+      const cos = cosmeticDef(p.co);
+      if (cos && cos.color) {
+        const isNeon = cos.kind === 'effect';
+        ctx.globalAlpha = blink ? 0.14 : (isNeon ? 0.45 : 0.22);
+        ctx.fillStyle = cos.color;
+        ctx.beginPath();
+        ctx.arc(0, 0, isNeon ? 26 : 30, 0, Math.PI * 2);
+        ctx.fill();
+        if (isNeon) {
+          ctx.globalAlpha = blink ? 0.35 : 0.7;
+          ctx.strokeStyle = cos.color;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, 27, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = blink ? 0.28 : 1;
+      }
       ctx.rotate(p.a);
 
+      const flameColor = cos && cos.color ? cos.color : null;
       if (p.th) { // пламя двигателя
         const fl = 10 + Math.random() * 9;
-        ctx.fillStyle = Math.random() < 0.5 ? '#ff9d4d' : '#ffd75e';
+        ctx.fillStyle = flameColor || (Math.random() < 0.5 ? '#ff9d4d' : '#ffd75e');
         ctx.beginPath();
         ctx.moveTo(-13, -5);
         ctx.lineTo(-13 - fl, 0);

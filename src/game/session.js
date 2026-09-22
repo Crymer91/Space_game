@@ -1,6 +1,6 @@
 // Игровая сессия мультиплеера: серверный тик-луп поверх общей симуляции.
 import { createWorld, stepWorld, snapshotOf, buyUpgrade, selectCard } from '../../shared/world.js';
-import { getModules, unlockModule, setModuleActive } from '../db.js';
+import { getModules, getHangarStats, getCosmetics, unlockModule } from '../db.js';
 
 function clamp01(v) {
   return Math.max(-1, Math.min(1, Number(v)));
@@ -19,11 +19,17 @@ export class GameSession {
     const playerIds = [];
     const nicknames = {};
     const modulesByPlayer = {};
+    const hangarByPlayer = {};
+    const cosmeticsByPlayer = {};
     for (const p of room.players.values()) {
       playerIds.push(p.playerId);
       nicknames[p.playerId] = p.nickname;
-      // состояние модулей режима multi из аккаунта (Б1)
-      if (db) modulesByPlayer[p.playerId] = getModules(db, p.playerId, 'multi');
+      // состояние модулей режима multi из аккаунта (Б1) и базовые характеристики (Б2)
+      if (db) {
+        modulesByPlayer[p.playerId] = getModules(db, p.playerId, 'multi');
+        hangarByPlayer[p.playerId] = getHangarStats(db, p.playerId, 'multi');
+        cosmeticsByPlayer[p.playerId] = getCosmetics(db, p.playerId);
+      }
     }
     this.world = createWorld({
       playerIds,
@@ -31,16 +37,16 @@ export class GameSession {
       durationMs: config.matchDurationMs,
       seed: Date.now() ^ (Math.random() * 0xffffffff),
       modulesByPlayer,
+      hangarByPlayer,
+      cosmeticsByPlayer,
       godMode: config.godMode,
     });
-    // модуль «Ракеты» разблокируется с Фантома в аккаунте (Б1; Ангар появится в Б2).
-    // До появления ангара разблокировка сразу активирует модуль.
+    // модуль «Ракеты» разблокируется с Фантома в аккаунте (Б1). С появлением
+    // Ангара (Б2) разблокировка больше не активирует модуль автоматически —
+    // активация покупается в Ангаре за монеты банка режима.
     this.world.onModuleUnlock = (playerId, key) => {
       if (!this.db) return;
-      const res = unlockModule(this.db, playerId, 'multi', key, 0);
-      if (!res.error || res.error === 'already-unlocked') {
-        setModuleActive(this.db, playerId, 'multi', key, true, 0);
-      }
+      unlockModule(this.db, playerId, 'multi', key, 0);
     };
     this.inputs = {};
     this.tickCount = 0;

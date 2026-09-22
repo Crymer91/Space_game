@@ -2,8 +2,9 @@
 import { net, connect, api, getIdentity, saveNickname, isConnected } from './net.js';
 import { createInput } from './input.js';
 import { createRenderer } from './render.js';
-import { startLocalGame, loadSoloModules } from './local.js';
+import { startLocalGame, loadSoloModules, grantSoloModule } from './local.js';
 import { startMultiGame } from './multi.js';
+import { createHangar } from './hangar.js';
 import { BALANCE } from '/shared/balance.js';
 
 const $ = (id) => document.getElementById(id);
@@ -21,8 +22,19 @@ const els = {
   overReason: $('overReason'),
   overRows: $('overRows'),
   overRecord: $('overRecord'),
+  overRank: $('overRank'),
   againBtn: $('againBtn'),
   toMenuBtn: $('toMenuBtn'),
+  rankBtn: $('rankBtn'),
+  rankOverlay: $('rankOverlay'),
+  rankTabs: $('rankTabs'),
+  rankSizes: $('rankSizes'),
+  rankMeta: $('rankMeta'),
+  rankList: $('rankList'),
+  rankCloseBtn: $('rankCloseBtn'),
+  hangarBtn: $('hangarBtn'),
+  hangarBtnOver: $('hangarBtnOver'),
+  hangarOverlay: $('hangarOverlay'),
   gameHint: $('gameHint'),
   announce: $('announce'),
   nickInput: $('nickInput'),
@@ -46,6 +58,13 @@ let overShown = false;
 let lastMode = null;
 let serverGodMode = false;
 let serverConfigLoaded = false;
+let playerStats = null;
+
+// Единая точка обновления статистики аккаунта (Ангар/соло-матчи читают её отсюда)
+function setStats(st) {
+  if (st != null) playerStats = st;
+  updateRecordLine(playerStats);
+}
 
 // god mode из .env / GOD_MODE=1 на сервере работает и в соло (страница отдаётся сервером)
 async function loadServerConfig() {
@@ -176,6 +195,7 @@ function showMenu() {
   els.gameScreen.classList.add('hidden');
   els.overOverlay.classList.add('hidden');
   els.waitOverlay.classList.add('hidden');
+  els.rankOverlay.classList.add('hidden');
   els.menuScreen.classList.remove('hidden');
   input.setActive(false);
 }
@@ -184,6 +204,7 @@ function showGame() {
   els.menuScreen.classList.add('hidden');
   els.waitOverlay.classList.add('hidden');
   els.overOverlay.classList.add('hidden');
+  els.rankOverlay.classList.add('hidden');
   els.gameScreen.classList.remove('hidden');
   input.setActive(true);
 }
@@ -246,6 +267,8 @@ function showOver(results, mode) {
   } else {
     els.overRecord.textContent = '';
   }
+  els.overRank.classList.add('hidden');
+  showResultRank(mode);
   els.overOverlay.classList.remove('hidden');
 }
 
@@ -260,6 +283,102 @@ function toast(msg, isError = false) {
   els.menuError.style.color = isError ? 'var(--err)' : 'var(--ok)';
   clearTimeout(toast._t);
   toast._t = setTimeout(() => { els.menuError.textContent = ''; }, 4000);
+}
+
+// ===================== РЕЙТИНГ (Е2) =====================
+const RANK_LABELS = { solo: 'Solo по очкам', multi: 'Multi по очкам', coins: 'Монеты (банк)' };
+let rankMode = 'solo';
+let rankLimit = 10;
+let rankLoading = false;
+
+async function openRankOverlay() {
+  if (!requireOnline()) return;
+  els.rankOverlay.classList.remove('hidden');
+  setRankTab(rankMode);
+  setRankLimit(rankLimit);
+  await loadTopRank();
+}
+
+function setRankTab(mode) {
+  rankMode = mode;
+  for (const btn of els.rankTabs.children) {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  }
+}
+
+function setRankLimit(limit) {
+  rankLimit = limit;
+  for (const btn of els.rankSizes.children) {
+    btn.classList.toggle('active', Number(btn.dataset.limit) === limit);
+  }
+}
+
+function fmtRankNumber(n) {
+  return Number(n).toLocaleString('ru-RU');
+}
+
+function buildRankRows(container, entries, selfId, startPos) {
+  container.textContent = '';
+  entries.forEach((r, j) => {
+    const row = document.createElement('div');
+    row.className = 'rank-row' + (r.playerId === selfId ? ' me' : '');
+    const pos = document.createElement('span');
+    pos.className = 'pos';
+    pos.textContent = '#' + (startPos + j);
+    const nick = document.createElement('span');
+    nick.className = 'nick';
+    nick.textContent = r.nickname || r.playerId;
+    nick.title = r.nickname || r.playerId;
+    const score = document.createElement('span');
+    score.className = 'score';
+    score.textContent = fmtRankNumber(r.score);
+    row.append(pos, nick, score);
+    container.append(row);
+  });
+}
+
+async function loadTopRank() {
+  if (rankLoading) return;
+  rankLoading = true;
+  els.rankList.textContent = '';
+  els.rankMeta.textContent = 'Загрузка…';
+  const res = await api.leaderboardTop(rankMode, rankLimit);
+  rankLoading = false;
+  if (res.error) {
+    const div = document.createElement('div');
+    div.className = 'rank-empty';
+    div.textContent = res.message || 'Не удалось загрузить рейтинг';
+    els.rankList.append(div);
+    return;
+  }
+  const top = (res.data && res.data.top) || [];
+  els.rankMeta.textContent = RANK_LABELS[rankMode] + (top.length ? ` · всего ${top.length}` : '');
+  if (!top.length) {
+    const div = document.createElement('div');
+    div.className = 'rank-empty';
+    div.textContent = 'Пока пусто — сыграйте матч, чтобы попасть в таблицу';
+    els.rankList.append(div);
+    return;
+  }
+  buildRankRows(els.rankList, top, getIdentity().playerId, 1);
+}
+
+// экран результатов: «Ваш ранг: #N» + до 5 строк (2 выше / я / 2 ниже)
+async function showResultRank(mode) {
+  const sec = mode === 'multi' ? 'multi' : 'solo';
+  if (!isConnected()) return;
+  const res = await api.leaderboardRank(sec);
+  if (res.error || !res.data || res.data.rank == null) return;
+  const d = res.data;
+  const me = getIdentity().playerId;
+  const title = document.createElement('div');
+  title.className = 'rank-block-title';
+  title.textContent = `Ваш ранг: #${d.rank} из ${d.total} · раздел «${RANK_LABELS[sec]}»`;
+  els.overRank.innerHTML = '';
+  els.overRank.append(title);
+  const above = Math.min(2, d.rank - 1);
+  buildRankRows(els.overRank, d.entries || [], me, d.rank - above);
+  els.overRank.classList.remove('hidden');
 }
 
 // ===================== РЕЖИМЫ =====================
@@ -311,13 +430,22 @@ async function startSolo() {
   selfId = 'you';
   showGame();
   renderer.resetFx();
+  const st = playerStats || {};
   current = {
     mode: 'solo',
     controller: startLocalGame({
       renderer,
       input,
       nickname: els.nickInput.value.trim(),
-      modules: loadSoloModules(),
+      modules: (st.modules && st.modules.solo) || loadSoloModules(),
+      hangar: (st.hangar && st.hangar.solo) || {},
+      cosmetics: st.cosmetics || null,
+      // Б2: solo-модули хранятся на сервере; офлайн — фолбэк в localStorage
+      onModuleUnlock: async (key) => {
+        if (!isConnected()) return grantSoloModule(key);
+        const res = await api.moduleUnlock(key, 'solo');
+        if (res.ok && res.data) setStats(res.data);
+      },
       godMode: serverGodMode,
       onBuyResult,
       onOver: async (results) => {
@@ -326,7 +454,7 @@ async function startSolo() {
             results.players[0]?.score || 0,
             results.players[0]?.coinsEarned || 0
           );
-          if (res.ok) updateRecordLine(res.data);
+          if (res.ok) setStats(res.data);
         }
         showOver(results, 'solo');
       },
@@ -421,7 +549,7 @@ net.on('net:disconnected', () => {
 });
 
 net.on('auth:ok', (data) => {
-  if (data?.stats) updateRecordLine(data.stats);
+  if (data?.stats) setStats(data.stats);
 });
 
 net.on('matchmaking:queued', (d) => {
@@ -488,6 +616,43 @@ els.toMenuBtn.addEventListener('click', () => showMenu());
 els.againBtn.addEventListener('click', () => {
   if (lastMode === 'multi') findMatch();
   else startSolo();
+});
+
+// рейтинг (Е2)
+els.rankBtn.addEventListener('click', () => openRankOverlay());
+els.rankCloseBtn.addEventListener('click', () => els.rankOverlay.classList.add('hidden'));
+els.rankTabs.addEventListener('click', (e) => {
+  const tab = e.target.closest('.rank-tab');
+  if (!tab) return;
+  setRankTab(tab.dataset.mode);
+  loadTopRank();
+});
+els.rankSizes.addEventListener('click', (e) => {
+  const btn = e.target.closest('.rank-size');
+  if (!btn) return;
+  setRankLimit(Number(btn.dataset.limit));
+  loadTopRank();
+});
+
+// Ангар (Б2): кнопки в меню и на экране результатов
+const hangar = createHangar({
+  api,
+  getStats: () => playerStats,
+  setStats,
+  requireOnline,
+  toast,
+});
+els.hangarBtn.addEventListener('click', () => hangar.open());
+els.hangarBtnOver.addEventListener('click', () => hangar.open());
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !els.hangarOverlay.classList.contains('hidden')) {
+    els.hangarOverlay.classList.add('hidden');
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !els.rankOverlay.classList.contains('hidden')) {
+    els.rankOverlay.classList.add('hidden');
+  }
 });
 
 // апгрейды из HUD

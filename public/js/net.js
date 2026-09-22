@@ -107,8 +107,15 @@ export const api = {
   moduleUnlock: (key, mode = 'solo') => ack({ event: 'module:unlock', data: { key, mode } }),
   moduleSetActive: (key, active, mode = 'solo') => ack({ event: 'module:setActive', data: { key, mode, active } }),
   moduleUpgrade: (key, mode = 'solo') => ack({ event: 'module:upgrade', data: { key, mode } }),
+  // Ангар (Б2): базовые характеристики и косметика за монеты банка режима
+  hangarBuyStat: (key, mode = 'solo') => ack({ event: 'hangar:buyStat', data: { key, mode } }),
+  cosmeticBuy: (key, mode = 'solo') => ack({ event: 'cosmetic:buy', data: { key, mode } }),
+  cosmeticEquip: (key) => ack({ event: 'cosmetic:equip', data: { key } }),
   // карточки уровня rogue-like (А3): выбор «1 из 3» применяет сервер
   selectCard: (cardId) => ack({ event: 'card:select', data: { cardId } }),
+  // рейтинги (Е2): разделы solo / multi / coins
+  leaderboardRank: (mode = 'solo') => ack({ event: 'leaderboard:rank', data: { mode } }),
+  leaderboardTop: (mode = 'solo', limit = 10) => ack({ event: 'leaderboard:top', data: { mode, limit } }),
 };
 
 // удобный фасад для модулей игры

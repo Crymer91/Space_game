@@ -23,6 +23,10 @@
 
       <button id="soloBtn" class="btn primary big">Одиночная игра</button>
       <button id="findBtn" class="btn primary big">Найти соперника <small>(интернет-матч)</small></button>
+      <div class="menu-row">
+        <button id="hangarBtn" class="btn big">🚀 Ангар</button>
+        <button id="rankBtn" class="btn big">Рейтинг</button>
+      </div>
 
       <div class="divider">или комната по коду</div>
       <div class="room-row">
@@ -90,10 +94,51 @@
         <tr><th>Игрок</th><th>Очки</th><th>Астероидов</th><th>Монет</th></tr>
       </thead><tbody id="overRows"></tbody></table>
       <div id="overRecord" class="record-line"></div>
+      <div id="overRank" class="rank-block hidden"></div>
       <div class="btn-row">
         <button id="againBtn" class="btn primary">Ещё раз</button>
+        <button id="hangarBtnOver" class="btn">🚀 Ангар</button>
         <button id="toMenuBtn" class="btn">В меню</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== Ангар (Б2): базовые характеристики, модули, косметика ===== -->
+  <div id="hangarOverlay" class="overlay hidden">
+    <div class="overlay-card hangar-card">
+      <h2>🚀 Ангар</h2>
+      <div id="hangarBanks" class="hangar-banks">
+        <button class="rank-tab active" data-mode="solo">Solo</button>
+        <button class="rank-tab" data-mode="multi">Multi</button>
+      </div>
+      <div id="hangarBankLabel" class="hangar-bank-label"></div>
+      <div id="hangarTabs" class="hangar-tabs">
+        <button class="rank-tab active" data-tab="stats">Характеристики</button>
+        <button class="rank-tab" data-tab="modules">Модули</button>
+        <button class="rank-tab" data-tab="cosmetics">Косметика</button>
+      </div>
+      <div id="hangarBody" class="hangar-body"></div>
+      <div id="hangarError" class="hangar-error"></div>
+      <button id="hangarCloseBtn" class="btn">Закрыть</button>
+    </div>
+  </div>
+
+  <!-- ===== Рейтинг (Е2) ===== -->
+  <div id="rankOverlay" class="overlay hidden">
+    <div class="overlay-card rank-card">
+      <h2>Рейтинг</h2>
+      <div id="rankTabs" class="rank-tabs">
+        <button class="rank-tab active" data-mode="solo">Solo</button>
+        <button class="rank-tab" data-mode="multi">Multi</button>
+        <button class="rank-tab" data-mode="coins">Монеты</button>
+      </div>
+      <div id="rankSizes" class="rank-sizes">
+        <button class="rank-size active" data-limit="10">Топ-10</button>
+        <button class="rank-size" data-limit="100">Топ-100</button>
+      </div>
+      <div id="rankMeta" class="rank-meta"></div>
+      <div id="rankList" class="rank-list"></div>
+      <button id="rankCloseBtn" class="btn">Закрыть</button>
     </div>
   </div>
 

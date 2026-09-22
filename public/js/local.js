@@ -30,7 +30,7 @@ export function grantSoloModule(key) {
   return st;
 }
 
-export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult, modules, godMode = false }) {
+export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult, modules, hangar = {}, cosmetics = null, onModuleUnlock, godMode = false }) {
   hideCardPicker();
   const urlGodMode = /[?&]godMode=1(?=&|$)/.test(location.search);
   const world = createWorld({
@@ -39,11 +39,16 @@ export function startLocalGame({ renderer, input, nickname, onOver, onBuyResult,
     durationMs: null, // бесконечно, пока живы
     seed: (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0,
     modulesByPlayer: { you: modules },
+    hangarByPlayer: { you: hangar },        // Б2: уровни базовых характеристик
+    cosmeticsByPlayer: { you: { equipped: (cosmetics && cosmetics.equipped) || 'default' } },
     godMode: godMode || urlGodMode,
   });
-  // убийство Фантома разблокирует модуль «Ракеты» в solo-банке
+  // убийство Фантома разблокирует модуль «Ракеты»: в онлайне — через сервер
+  // (Б2: solo-модули на сервере), офлайн — в localStorage
   world.onModuleUnlock = (playerId, key) => {
-    if (key === 'rockets') grantSoloModule('rockets');
+    if (key !== 'rockets') return;
+    if (onModuleUnlock) onModuleUnlock(key);
+    else grantSoloModule('rockets');
   };
 
   let raf = null;

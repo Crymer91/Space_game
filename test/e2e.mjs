@@ -5,9 +5,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { io } from 'socket.io-client';
-import { createWorld, stepWorld, snapshotOf, selectCard, expThreshold, forcePush } from '../shared/world.js';
+import { createWorld, stepWorld, snapshotOf, selectCard, expThreshold, forcePush, hangarCoef, bulletDamage, fireCooldownMs } from '../shared/world.js';
 import { BALANCE } from '../shared/balance.js';
-import { createDb, upsertPlayer, submitScore, getTopPlayers, getLeaderboard } from '../src/db.js';
+import { createDb, upsertPlayer, submitScore, getTopPlayers, getLeaderboard, buyHangarStat, buyCosmetic, equipCosmetic, getHangarStats, getCosmetics } from '../src/db.js';
 
 const PORT = 3199;
 const URL = `http://127.0.0.1:${PORT}`;
@@ -117,6 +117,83 @@ try {
     'уровень модуля ракеты растёт (0 → 1)');
   const modUpMulti = await emitAck(a, 'module:upgrade', { key: 'rockets', mode: 'multi' });
   ok(modUpMulti?.error === 'not-unlocked', 'банк мультиплеера независим от solo');
+
+  // ---- Ангар (Б2): базовые характеристики за монеты банка режима ----
+  const hgNo = await emitAck(a, 'hangar:buyStat', { key: 'speed', mode: 'solo' });
+  ok(hgNo?.error === 'not-enough-coins', 'улучшение характеристики требует монет банка');
+  const hgBadKey = await emitAck(a, 'hangar:buyStat', { key: 'nope', mode: 'solo' });
+  ok(hgBadKey?.error === 'unknown-stat', 'неизвестная характеристика отклоняется');
+  await emitAck(a, 'solo:submit', { score: 3000, coins: 500 });
+  const hgBuy = await emitAck(a, 'hangar:buyStat', { key: 'speed', mode: 'solo' });
+  ok(hgBuy?.ok && hgBuy.data.hangar?.solo?.speed === 1, 'покупка первой ступени «Скорости» (уровень 1)');
+  ok(hgBuy.data.coinsSolo >= 490, 'монеты списаны из solo-банка');
+  for (let i = 2; i <= BALANCE.hangar.maxLevel; i++) {
+    await emitAck(a, 'hangar:buyStat', { key: 'speed', mode: 'solo' });
+  }
+  const hgMax = await emitAck(a, 'hangar:buyStat', { key: 'speed', mode: 'solo' });
+  ok(hgMax?.error === 'max-level', '6-я покупка отклоняется (максимум 5 уровней)');
+  const hgSep = await emitAck(a, 'hangar:buyStat', { key: 'damage', mode: 'multi' });
+  ok(hgSep?.error === 'not-enough-coins', 'банк мультиплеера независим от solo');
+
+  // ---- Ангар (Б2): косметика — покупка из банка, экипировка ----
+  const cosBad = await emitAck(a, 'cosmetic:buy', { key: 'nope', mode: 'solo' });
+  ok(cosBad?.error === 'unknown-cosmetic', 'неизвестная косметика отклоняется');
+  const cosNoMulti = await emitAck(a, 'cosmetic:buy', { key: 'azure', mode: 'multi' });
+  ok(cosNoMulti?.error === 'not-enough-coins', 'косметика платится из выбранного банка (multi пуст)');
+  const cosBuy = await emitAck(a, 'cosmetic:buy', { key: 'azure', mode: 'solo' });
+  ok(cosBuy?.ok && cosBuy.data.cosmetics?.owned?.includes('azure'), 'покупка косметики успешна');
+  const cosAgain = await emitAck(a, 'cosmetic:buy', { key: 'azure', mode: 'solo' });
+  ok(cosAgain?.error === 'already-owned', 'повторная покупка косметики отклоняется');
+  const cosEq = await emitAck(a, 'cosmetic:equip', { key: 'azure' });
+  ok(cosEq?.ok && cosEq.data.cosmetics?.equipped === 'azure', 'экипировка косметики успешна');
+  const cosEqNo = await emitAck(a, 'cosmetic:equip', { key: 'gold' });
+  ok(cosEqNo?.error === 'not-owned', 'экипировка некупленного предмета отклоняется');
+  const hgNoAuth = await new Promise((resolve) => {
+    const c = io(URL, { transports: ['websocket'] });
+    c.on('connect', async () => {
+      resolve(await emitAck(c, 'hangar:buyStat', { key: 'speed', mode: 'solo' }));
+      c.disconnect();
+    });
+  });
+  ok(hgNoAuth?.error === 'not-authorized', 'hangar:buyStat без auth отклоняется');
+
+  // ---- Ангар (Б2): коэффициенты применяются в симуляции + персистентность в БД ----
+  {
+    ok(hangarCoef('damage', 1) === 0.01 && hangarCoef('damage', 3) === 0.05
+      && hangarCoef('damage', 5) === 0.15, 'hangarCoef: накопленный бонус 1%/5%/15%');
+    const p0 = createWorld({ playerIds: ['u'], nicknames: { u: 'Unit' }, durationMs: null, seed: 7 }).players[0];
+    const world = createWorld({ playerIds: ['u'], nicknames: { u: 'Unit' }, durationMs: null, seed: 7,
+      hangarByPlayer: { u: { damage: 1, firerate: 1, speed: 1, magnet: 1 } },
+      cosmeticsByPlayer: { u: { owned: ['crimson'], equipped: 'crimson' } } });
+    const p = world.players[0];
+    ok(p.cos === 'crimson', 'игрок получает экипированную косметику');
+    ok(snapshotOf(world).ps[0].co === 'crimson', 'снапшот несёт ключ косметики (co)');
+    const dUp = bulletDamage(p) / bulletDamage(p0);
+    ok(dUp > 1.005 && dUp < 1.02, 'пуля учитывает +1% урона (характеристика damage)');
+    const cdUp = (1 - fireCooldownMs(p, 0) / fireCooldownMs(p0, 0));
+    ok(cdUp > 0.005 && cdUp < 0.02, 'скорострельность снижает перезарядку на ~1%');
+
+    // персистентность в БД (прогресс хранит solo/multi раздельно)
+    const hgDir = mkdtempSync(path.join(tmpdir(), 'ab-hg-'));
+    const db = createDb(path.join(hgDir, 'hg.db'));
+    try {
+      upsertPlayer(db, 'hero', 'Hero');
+      submitScore(db, 'hero', 0, { mode: 'solo', coins: 200 }); // наполняем solo-банк
+      const r1 = buyHangarStat(db, 'hero', 'solo', 'speed', 10);
+      ok(r1.ok && r1.level === 1 && r1.stats.hangar?.solo?.speed === 1, 'БД: уровень характеристики растёт (0 → 1)');
+      ok(getHangarStats(db, 'hero', 'multi').speed == null, 'БД: характеристики режимов раздельны');
+      ok(buyHangarStat(db, 'hero', 'solo', 'speed', 9999).error === 'not-enough-coins', 'БД: покупка без монет отклоняется');
+      ok(buyCosmetic(db, 'hero', 'emerald', 'multi', 30).error === 'not-enough-coins', 'БД: косметика из пустого multi-банка отклоняется');
+      const bc = buyCosmetic(db, 'hero', 'emerald', 'solo', 20);
+      const cos = getCosmetics(db, 'hero');
+      ok(bc.ok && cos.owned.includes('emerald') && cos.equipped === 'default', 'БД: покупка добавляет в owned, не экипирует сама');
+      ok(equipCosmetic(db, 'hero', 'emerald').ok && getCosmetics(db, 'hero').equipped === 'emerald', 'БД: экипировка сохраняется');
+      ok(equipCosmetic(db, 'hero', 'gold').error === 'not-owned', 'БД: экипировка некупленного отклоняется');
+    } finally {
+      db.close();
+      rmSync(hgDir, { recursive: true, force: true });
+    }
+  }
 
   // ---- Рейтинги (Е1): сокет-ивенты leaderboard:top / leaderboard:rank ----
   const lbTop = await emitAck(a, 'leaderboard:top', { mode: 'solo' });

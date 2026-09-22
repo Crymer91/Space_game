@@ -69,7 +69,25 @@ export function moduleCost(key, action, nextLevel) {
   return null;
 }
 
-export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDurationMs, seed = 1, modulesByPlayer = {}, godMode = false }) {
+// Б2: коэффициент базовой характеристики Ангара по уровню. level — число купленных
+// уровней (0..max); результат — накопленный коэффициент лестницы coefs (1/3/5/10/15%).
+export function hangarCoef(key, level) {
+  const def = (B.hangar?.stats || []).find((s) => s.key === key);
+  if (!def) return 0;
+  const lvl = Math.max(0, Math.min(level || 0, def.coefs.length));
+  return lvl >= 1 ? def.coefs[lvl - 1] : 0;
+}
+
+export function createWorld({
+  playerIds,
+  nicknames = {},
+  durationMs = B.matchDurationMs,
+  seed = 1,
+  modulesByPlayer = {},
+  hangarByPlayer = {},    // Б2: уровни базовых характеристик Ангара (по режиму)
+  cosmeticsByPlayer = {}, // Б2: ключ косметики игрока ({ playerId: { equipped } })
+  godMode = false,
+}) {
   const world = {
     rng: mulberry32(seed),
     godMode,
@@ -177,6 +195,14 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
       // карточки (А3): бонусы уровня rogue-like
       speedBonus: 0,           // +15% к максимальной скорости за карточку «Скорость»
       energyMagnetBonus: 0,    // +30% к радиусу магнита экспы за карточку «Магнит»
+      // Ангар (Б2): пассивные коэффициенты базовых характеристик (1%→3%→5%→10%→15%)
+      hg: {
+        speed: hangarCoef('speed', (hangarByPlayer[id] || {}).speed),
+        magnet: hangarCoef('magnet', (hangarByPlayer[id] || {}).magnet),
+        damage: hangarCoef('damage', (hangarByPlayer[id] || {}).damage),
+        firerate: hangarCoef('firerate', (hangarByPlayer[id] || {}).firerate),
+      },
+      cos: (cosmeticsByPlayer[id] && cosmeticsByPlayer[id].equipped) || 'default',
     });
   }
   const w0 = B.waves.list && B.waves.list[0];
@@ -185,11 +211,12 @@ export function createWorld({ playerIds, nicknames = {}, durationMs = B.matchDur
 }
 
 export function bulletDamage(p) {
-  return 1 + p.dmgLvl * B.upgrades.damage.dmgPerLevel;
+  return (1 + p.dmgLvl * B.upgrades.damage.dmgPerLevel) * (1 + (p.hg && p.hg.damage || 0));
 }
 
 export function fireCooldownMs(p, now) {
   let cd = B.ship.fireCooldownMs * Math.pow(B.upgrades.firerate.cooldownFactor, p.rateLvl);
+  cd *= 1 - (p.hg && p.hg.firerate || 0); // Ангар (Б2): скорострельность
   if (now != null && now < p.rapidFireUntil) cd *= B.powerups.types.rapidFire.cooldownFactor;
   return cd;
 }
@@ -1878,8 +1905,9 @@ export function stepWorld(world, dtSec, inputs) {
     p.vx *= damp;
     p.vy *= damp;
     const sp = Math.hypot(p.vx, p.vy);
-    // карточка «Скорость» (А3): бонус к максимальной скорости умножается поверх базы
-    const maxSp = S.maxSpeed * (1 + (p.speedBonus || 0));
+    // карточка «Скорость» (А3): бонус к максимальной скорости умножается поверх базы;
+    // Ангар (Б2): базовая характеристика «Скорость» — тоже поверх базы
+    const maxSp = S.maxSpeed * (1 + (p.speedBonus || 0) + (p.hg && p.hg.speed || 0));
     if (sp > maxSp) { p.vx *= maxSp / sp; p.vy *= maxSp / sp; }
     p.x += p.vx * dt;
     p.y += p.vy * dt;
@@ -2134,13 +2162,15 @@ export function stepWorld(world, dtSec, inputs) {
   for (const c of world.coins) {
     c.vx *= coinDamp;
     c.vy *= coinDamp;
-    // магнит к ближайшему живому игроку (в пределах игрок.радиуса)
+    // магнит к ближайшему живому игроку (в пределах игрок.радиуса;
+    // Ангар (Б2): базовая характеристика «Магнит» расширяет радиус)
     let pull = null;
     let pullD = Infinity;
     for (const p of world.players) {
       if (!p.alive || p.out) continue;
       const d = Math.hypot(p.x - c.x, p.y - c.y);
-      if (d < C.magnetRadius && d < pullD) { pullD = d; pull = p; }
+      const radius = C.magnetRadius * (1 + (p.hg && p.hg.magnet || 0));
+      if (d < radius && d < pullD) { pullD = d; pull = p; }
     }
     // голодные враги-сборщики (В4) перетягивают монету, если они ближе игрока
     for (const e of world.enemies) {
@@ -2218,7 +2248,7 @@ export function stepWorld(world, dtSec, inputs) {
     for (const p of world.players) {
       if (!p.alive || p.out) continue;
       const d = Math.hypot(p.x - s.x, p.y - s.y);
-      const radius = EN.magnetRadius * (1 + (p.energyMagnetBonus || 0));
+      const radius = EN.magnetRadius * (1 + (p.energyMagnetBonus || 0) + (p.hg && p.hg.magnet || 0));
       if (d < radius && d < bestD) { bestD = d; target = p; }
     }
     if (target) {
@@ -2484,6 +2514,7 @@ export function snapshotOf(world) {
       mk: p.missiles || 0,
       hm: p.hasMissiles ? 1 : 0,
       mm: p.missileMaxAmmo || B.missile.maxAmmo,
+      co: p.cos, // Б2: ключ косметики корабля
       ab: {
         ar: p.hasArmor ? 1 : 0, ac: p.armorCharges||0, amx: B.abilities.armor.maxCharges,
         ls: p.hasLaser ? 1 : 0, lc: Math.max(0,(p.laserCdUntil||0)-world.t), la: Math.max(0,(p.laserActiveUntil||0)-world.t),

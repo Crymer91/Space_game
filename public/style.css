@@ -70,6 +70,9 @@ input:focus { outline: none; border-color: var(--accent); }
 .room-row input { width: 110px; text-transform: uppercase; letter-spacing: 2px; text-align: center; }
 .room-row .btn { white-space: nowrap; }
 
+.menu-row { display: flex; gap: 8px; }
+.menu-row .btn { flex: 1; }
+
 .menu-error { color: var(--err); font-size: 13px; min-height: 17px; text-align: center; }
 .record-line { color: var(--gold); font-size: 13px; text-align: center; min-height: 17px; }
 
@@ -196,6 +199,69 @@ input:focus { outline: none; border-color: var(--accent); }
 
 /* HUD: уровень rogue-like */
 .lvl-ico { color: #b88bff; font-weight: 700; }
+
+/* ===== Рейтинг (Е2) ===== */
+.rank-card { width: min(520px, 94vw); }
+.rank-tabs { display: flex; gap: 8px; }
+.rank-tab, .rank-size {
+  background: #232939; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--muted); padding: 7px 16px; font-size: 13.5px; cursor: pointer;
+}
+.rank-tab:hover, .rank-size:hover { color: var(--text); }
+.rank-tab.active, .rank-size.active {
+  background: var(--accent); border-color: transparent; color: #fff; font-weight: 600;
+}
+.rank-sizes { display: flex; gap: 8px; }
+.rank-meta { color: var(--muted); font-size: 12.5px; }
+.rank-list { width: 100%; max-height: 46vh; overflow-y: auto; text-align: left; }
+.rank-empty { color: var(--muted); padding: 16px; text-align: center; font-size: 13.5px; }
+.rank-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; border-bottom: 1px solid #20242f; font-size: 14px;
+}
+.rank-row .pos { width: 46px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rank-row .nick { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-row .score { color: var(--gold); font-weight: 700; font-variant-numeric: tabular-nums; }
+.rank-row.me { background: rgba(79, 140, 255, .14); border-left: 3px solid var(--accent); }
+.rank-row.me .pos, .rank-row.me .nick { color: var(--cyan); font-weight: 700; }
+
+.rank-block {
+  width: 100%; background: #12151f; border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px 2px 2px; text-align: left;
+}
+.rank-block-title { color: var(--muted); font-size: 12.5px; text-align: center; padding: 4px 8px 6px; }
+
+/* ===== Ангар (Б2) ===== */
+.hangar-card { width: min(560px, 94vw); }
+.hangar-banks { display: flex; gap: 8px; }
+.hangar-bank-label { color: var(--gold); font-weight: 600; font-size: 15px; }
+.hangar-tabs { display: flex; gap: 8px; }
+.hangar-body {
+  width: 100%; max-height: 52vh; overflow-y: auto; text-align: left;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.hangar-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: #12151f; border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 12px; font-size: 13.5px;
+}
+.hangar-row .h-name { font-weight: 700; min-width: 130px; }
+.hangar-row .h-desc { color: var(--muted); flex: 1 1 200px; font-size: 12.5px; }
+.hangar-row .h-state { color: var(--muted); font-size: 12.5px; }
+.hangar-row .h-info { color: var(--muted); font-size: 12.5px; }
+.hangar-row .h-pips { color: var(--accent); letter-spacing: 2px; font-size: 12px; }
+.hangar-row .h-actions { display: flex; gap: 6px; margin-left: auto; }
+.hangar-row .h-btn { padding: 6px 12px; font-size: 13px; min-width: 150px; text-align: center; }
+.hangar-row .h-off { background: #3a2a33; }
+.hangar-module { flex-direction: column; align-items: flex-start; }
+.hangar-module .h-name { color: var(--cyan); }
+.hangar-module .h-actions { margin-left: 0; flex-wrap: wrap; }
+.hangar-cosmetic .h-swatch {
+  width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--border);
+  box-shadow: inset 0 0 6px rgba(255,255,255,.12);
+}
+.hangar-cosmetic .h-swatch.glow { box-shadow: 0 0 12px rgba(184,139,255,.85); }
+.hangar-error { color: var(--err); font-size: 13px; min-height: 17px; }
 
 @media (max-width: 700px) {
   .player-hud { min-width: 130px; padding: 6px 10px; }

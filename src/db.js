@@ -45,6 +45,8 @@ export function upsertPlayer(db, playerId, nickname) {
       bestScore: 0, coinsSolo: 0, coinsMulti: 0,
       bestScoreSolo: 0, bestScoreMulti: 0,
       moduleState: {}, // { solo: {...}, multi: {...} } — состояние модулей (см. раздел «модули»)
+      hangarStats: {}, // { solo: { speed: 2, ... }, multi: {...} } — уровни базовых характеристик (Б2)
+      cosmetics: null, // { owned: [...], equipped: 'default' } — косметика на аккаунт (Б2)
     };
   } else {
     p.nickname = nickname;
@@ -52,6 +54,13 @@ export function upsertPlayer(db, playerId, nickname) {
     if (p.coinsSolo == null) p.coinsSolo = 0;
     if (p.coinsMulti == null) p.coinsMulti = 0;
     if (p.moduleState == null) p.moduleState = {};
+    if (p.hangarStats == null) p.hangarStats = {};
+    if (p.cosmetics == null || typeof p.cosmetics !== 'object') {
+      p.cosmetics = { owned: ['default'], equipped: 'default' };
+    } else {
+      if (!Array.isArray(p.cosmetics.owned) || !p.cosmetics.owned.length) p.cosmetics.owned = ['default'];
+      if (typeof p.cosmetics.equipped !== 'string') p.cosmetics.equipped = 'default';
+    }
     // миграция старых профилей на раздельные рекорды режимов (Е1)
     if (p.bestScoreSolo == null) p.bestScoreSolo = p.bestScore || 0;
     if (p.bestScoreMulti == null) p.bestScoreMulti = 0;
@@ -77,6 +86,8 @@ export function getPlayerStats(db, playerId) {
     coinsSolo: p?.coinsSolo ?? 0,
     coinsMulti: p?.coinsMulti ?? 0,
     modules,
+    hangar: p ? { solo: getHangarStats(db, playerId, 'solo'), multi: getHangarStats(db, playerId, 'multi') } : null,
+    cosmetics: p ? getCosmetics(db, playerId) : null,
   };
 }
 
@@ -157,6 +168,77 @@ export function upgradeModule(db, playerId, mode, key, level, cost) {
   p.lastSeenAt = Date.now();
   db.flush();
   return { ok: true, level: st.levels[key], stats: getPlayerStats(db, playerId) };
+}
+
+// --- Ангар (Б2): базовые характеристики — уровни по режиму, покупаются за монеты банка ---
+
+function ensureHangarStats(p, mode) {
+  const mk = modeKey(mode);
+  if (p.hangarStats == null) p.hangarStats = {};
+  return p.hangarStats[mk] || (p.hangarStats[mk] = {});
+}
+
+export function getHangarStats(db, playerId, mode) {
+  const p = db.data.players[playerId];
+  if (!p) return {};
+  if (p.hangarStats == null) p.hangarStats = {};
+  return { ...(p.hangarStats[modeKey(mode)] || {}) };
+}
+
+// Покупка (улучшение) базовой характеристики: level = текущий уровень, cost — цена
+// следующего (вычисляется в events.js из BALANCE). Возвращает { ok, level, stats }.
+export function buyHangarStat(db, playerId, mode, key, cost) {
+  const p = db.data.players[playerId];
+  if (!p) return { error: 'not-found' };
+  const coinKey = modeKey(mode) === 'multi' ? 'coinsMulti' : 'coinsSolo';
+  const st = ensureHangarStats(p, mode);
+  if (p[coinKey] < cost) return { error: 'not-enough-coins' };
+  p[coinKey] -= cost;
+  st[key] = (st[key] || 0) + 1;
+  p.lastSeenAt = Date.now();
+  db.flush();
+  return { ok: true, level: st[key], stats: getPlayerStats(db, playerId) };
+}
+
+// --- Косметика (Б2): аккаунт-уровень; покупка разовая за монеты выбранного банка ---
+
+export function getCosmetics(db, playerId) {
+  const p = db.data.players[playerId];
+  if (!p) return { owned: ['default'], equipped: 'default' };
+  if (p.cosmetics == null || typeof p.cosmetics !== 'object') {
+    p.cosmetics = { owned: ['default'], equipped: 'default' };
+  }
+  return { owned: [...(p.cosmetics.owned || ['default'])], equipped: p.cosmetics.equipped || 'default' };
+}
+
+// Покупка косметики: cost — цена (в монетах банка mode). Возвращает { ok, stats }.
+export function buyCosmetic(db, playerId, key, mode, cost) {
+  const p = db.data.players[playerId];
+  if (!p) return { error: 'not-found' };
+  const coinKey = modeKey(mode) === 'multi' ? 'coinsMulti' : 'coinsSolo';
+  const cos = getCosmetics(db, playerId);
+  if (cos.owned.includes(key)) return { error: 'already-owned' };
+  if (p[coinKey] < cost) return { error: 'not-enough-coins' };
+  p[coinKey] -= cost;
+  cos.owned.push(key);
+  p.cosmetics = cos;
+  p.lastSeenAt = Date.now();
+  db.flush();
+  return { ok: true, stats: getPlayerStats(db, playerId) };
+}
+
+// Экипировка косметики (должна быть куплена). Возвращает { ok, stats }.
+export function equipCosmetic(db, playerId, key) {
+  const p = db.data.players[playerId];
+  if (!p) return { error: 'not-found' };
+  const cos = getCosmetics(db, playerId);
+  if (!cos.owned.includes(key)) return { error: 'not-owned' };
+  if (cos.equipped === key) return { error: 'already-equipped' };
+  cos.equipped = key;
+  p.cosmetics = cos;
+  p.lastSeenAt = Date.now();
+  db.flush();
+  return { ok: true, stats: getPlayerStats(db, playerId) };
 }
 
 // Сохраняет рекорд режима (solo/multi) и возвращает обновлённую статистику.
