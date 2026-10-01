@@ -28,32 +28,34 @@ export const BALANCE = {
       hp: 1, score: 10,
       coinsMin: 0, coinsMax: 1,
       energyMin: 1, energyMax: 1,
-      speedMin: 70, speedMax: 115,
+      speedMin: 49, speedMax: 80,   // −30% от прежних 70/115
     },
     medium: {
       radiusMin: 26, radiusMax: 34,
       hp: 5, score: 50,
       coinsMin: 2, coinsMax: 3,
       energyMin: 1, energyMax: 2,
-      speedMin: 45, speedMax: 80,
+      speedMin: 31, speedMax: 56,   // −30% от прежних 45/80
     },
     large: {
       radiusMin: 42, radiusMax: 52,
       hp: 10, score: 100,
       coinsMin: 4, coinsMax: 6,
       energyMin: 2, energyMax: 3,
-      speedMin: 25, speedMax: 55,
+      speedMin: 17, speedMax: 38,   // −30% от прежних 25/55
     },
     // раскалывание больших астероидов на меньшие; 0 = отключить
     splitLargeIntoMediums: 2,
     splitMediumIntoSmalls: 2,
     maxCount: 14,
     comet: {
-      radiusMin: 11, radiusMax: 15,
-      hp: 2, score: 75,
+      radiusMin: 12, radiusMax: 16,
+      hp: 1, score: 60,          // одно попадание = убийство (сбивается с одного выстрела)
       coinsMin: 1, coinsMax: 2,
-      energyMin: 1, energyMax: 2,
-      speedMin: 540, speedMax: 840,
+      energyMin: 1, energyMax: 1,
+      // скорость ниже скорости пули (bullet.speed = 560) — иначе комету почти
+      // невозможно достать: упреждение слишком большое, а время жизни пули мало
+      speedMin: 300, speedMax: 430,
       spawnWarnMs: 900, // предупреждение (мигающая стрелка) до появления кометы
     },
   },
@@ -71,7 +73,7 @@ export const BALANCE = {
     intervalMinMs: 6500,
     intervalMaxMs: 11000,
     maxAlive: 2,
-    hp: 4,
+    hp: 2,
     radius: 16,
     score: 150,
     coinsMin: 5, coinsMax: 8,
@@ -440,7 +442,7 @@ export const BALANCE = {
     lifeMs: 25000,
   },
 
-  matchDurationMs: 180000,
+  matchDurationMs: 300000,
 
   nebula: {
     satelliteChance: 0.35,       // шанс что астероид получит спутник после 2 босса
@@ -463,14 +465,17 @@ export const BALANCE = {
   enemyKinds: {
     asteroid: { intervalMs: 1400, count: 14, max: 14,
       composition: { small: 0.6, medium: 0.32, large: 0.08 } },
-    comet:    { intervalMs: 1900, count: 6,  max: 6 },
+    comet:    { intervalMs: 1900, count: 6,  max: 6,
+      // шанс, что очередная попытка спавна кометы реализуется (было 1.0 —
+      // каждая попытка давала комету); 0.5 = вдвое реже
+      spawnChance: 0.5 },
     enemy:    { intervalMs: 8000, count: 2,  max: 2 },
     // Бронированный (В4): броня = +100% HP, поглощает урон первой; собирает
     // монеты (1 → +10% брони). При броне < 30% прекращает огонь и уходит за
     // монетами, поэтому убить можно, если не дать ему пополниться.
     armored: {
       intervalMs: 8000, count: 1, max: 2,
-      hp: 5, armorHp: 5, radius: 20,
+      hp: 3, armorHp: 2, radius: 20,
       score: 220, coinsMin: 6, coinsMax: 9, energyMin: 3, energyMax: 5,
       accel: 240, maxSpeed: 175, turnRate: 2.6,
       fireCooldownMs: 1800, bulletSpeed: 380,
@@ -482,7 +487,7 @@ export const BALANCE = {
     // собирает монеты — растёт: +выстрел в очереди и быстрее пули.
     burst: {
       intervalMs: 7000, count: 1, max: 2,
-      hp: 7, radius: 18,
+      hp: 3, radius: 18,
       score: 260, coinsMin: 7, coinsMax: 10, energyMin: 3, energyMax: 5,
       accel: 260, maxSpeed: 185, turnRate: 3.0,
       fireCooldownMs: 1500, bulletSpeed: 470,
@@ -496,7 +501,7 @@ export const BALANCE = {
     // наносит урон.
     orbital: {
       intervalMs: 12000, count: 1, max: 1,
-      hp: 6, radius: 17,
+      hp: 3, radius: 17,
       score: 250, coinsMin: 5, coinsMax: 8, energyMin: 2, energyMax: 4,
       accel: 380, maxSpeed: 300, turnRate: 2.2,
       fireCooldownMs: 0, bulletSpeed: 0,
@@ -510,8 +515,10 @@ export const BALANCE = {
   //   cooldownMs   — период охлаждения после волны (пауза без спавна)
   //   bosses       — боссы, выпускаемые в начале волны: ['dreadnought', 'phantom', 'leviathan']
   //   spawns       — какие виды противников появляются и с какими параметрами:
-  //                  [{ kind: 'вид', intervalMs?, count?, max?, composition? }]
+  //                  [{ kind: 'вид', intervalMs?, count?, max?, composition?, spawnChance? }]
   //                  пропущенные поля берутся из enemyKinds; вид не указан — не спавнится.
+  //                  spawnChance — шанс, что очередная попытка спавна реализуется
+  //                  (по умолчанию 1 = всегда).
   //                  Новый вид противника добавляется новой записью в этом списке.
   // Волны проигрываются по порядку; после последней повторяется она же.
   waves: {
@@ -553,15 +560,29 @@ export const BALANCE = {
             composition: { small: 0.40, medium: 0.40, large: 0.20 } },
           { kind: 'comet', intervalMs: 1200, count: 8 },
         ] },
-      // 6. Стая охотников
+      // 6. Шквал: плотный поток мелочи (максимум на арене повыше)
+      { durationMs: 12000, cooldownMs: 2000,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 600, count: 22, max: 20,
+            composition: { small: 0.85, medium: 0.15, large: 0.00 } },
+          { kind: 'comet', intervalMs: 3000, count: 2 },
+        ] },
+      // 7. Каменный вал: только крупные глыбы
+      { durationMs: 13000, cooldownMs: 2000,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1300, count: 14, max: 16,
+            composition: { small: 0.25, medium: 0.40, large: 0.35 } },
+        ] },
+      // 8. Заслон: бронированные прикрывают очередного стрелка
       { durationMs: 14000, cooldownMs: 2500,
         spawns: [
-          { kind: 'asteroid', intervalMs: 900, count: 16,
-            composition: { small: 0.30, medium: 0.45, large: 0.25 } },
-          { kind: 'enemy', intervalMs: 6000, count: 3 },
-          { kind: 'burst', intervalMs: 7000, count: 1 },
+          { kind: 'asteroid', intervalMs: 1200, count: 12,
+            composition: { small: 0.35, medium: 0.45, large: 0.20 } },
+          { kind: 'comet', intervalMs: 2600, count: 3 },
+          { kind: 'armored', intervalMs: 7000, count: 2 },
+          { kind: 'burst', intervalMs: 8000, count: 1 },
         ] },
-      // 7. Фантом под прикрытием комет и врагов
+      // 9. Фантом под прикрытием комет и врагов
       { durationMs: 16000, cooldownMs: 3000, bosses: ['phantom'],
         spawns: [
           { kind: 'asteroid', intervalMs: 1200, count: 12,
@@ -571,9 +592,25 @@ export const BALANCE = {
           { kind: 'armored', intervalMs: 8000, count: 1 },
           { kind: 'burst', intervalMs: 7000, count: 1 },
         ] },
-      // 8. Полная тревога: всё и сразу
-      { durationMs: 14000, cooldownMs: 2000,
+      // 10. Стая охотников: Фантом зовёт подкрепление
+      { durationMs: 14000, cooldownMs: 2500,
         spawns: [
+          { kind: 'asteroid', intervalMs: 900, count: 16,
+            composition: { small: 0.30, medium: 0.45, large: 0.25 } },
+          { kind: 'enemy', intervalMs: 6000, count: 3 },
+          { kind: 'burst', intervalMs: 7000, count: 1 },
+        ] },
+      // 11. Вихрь: орбитальные рвут арену, стрелки их прикрывают
+      { durationMs: 14000, cooldownMs: 2500,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 900, count: 16,
+            composition: { small: 0.30, medium: 0.45, large: 0.25 } },
+          { kind: 'comet', intervalMs: 2000, count: 4 },
+          { kind: 'orbital', intervalMs: 9000, count: 2 },
+          { kind: 'burst', intervalMs: 7000, count: 2 },
+        ] },
+      // 12. Полная тревога: всё и сразу
+      { durationMs: 14000, cooldownMs: 2000,        spawns: [
           { kind: 'asteroid', intervalMs: 700, count: 20,
             composition: { small: 0.30, medium: 0.40, large: 0.30 } },
           { kind: 'comet', intervalMs: 1400, count: 8 },
@@ -582,7 +619,16 @@ export const BALANCE = {
           { kind: 'burst', intervalMs: 6000, count: 2 },
           { kind: 'orbital', intervalMs: 12000, count: 1 },
         ] },
-      // 9. Левиафан — финал всех фаз
+      // 13. Стальной дождь: стена бронированных, камней почти нет
+      { durationMs: 14000, cooldownMs: 3000,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1500, count: 8,
+            composition: { small: 0.50, medium: 0.50, large: 0.00 } },
+          { kind: 'armored', intervalMs: 5500, count: 3, max: 3 },
+          { kind: 'burst', intervalMs: 6500, count: 2 },
+          { kind: 'enemy', intervalMs: 7000, count: 2 },
+        ] },
+      // 14. Левиафан — финал всех фаз
       { durationMs: 18000, cooldownMs: 4000, bosses: ['leviathan'],
         spawns: [
           { kind: 'asteroid', intervalMs: 1000, count: 14,
@@ -593,7 +639,7 @@ export const BALANCE = {
           { kind: 'burst', intervalMs: 6000, count: 2 },
           { kind: 'orbital', intervalMs: 11000, count: 2 },
         ] },
-      // 10. Бесконечный затяжной бой (без босса) — пауза перед усиленными боссами
+      // 15. Затяжной бой (без босса) — передышка перед усиленными боссами
       { durationMs: 15000, cooldownMs: 2500,
         spawns: [
           { kind: 'asteroid', intervalMs: 850, count: 18,
@@ -604,7 +650,14 @@ export const BALANCE = {
           { kind: 'burst', intervalMs: 6500, count: 2 },
           { kind: 'orbital', intervalMs: 12000, count: 1 },
         ] },
-      // 11. Усиленный Дредноут+ (2 фазы: стандарт → очереди + щит)
+      // 16. Дробный дождь: только мелочь и кометы — спокойная волна-разрядка
+      { durationMs: 13000, cooldownMs: 3000,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 700, count: 20, max: 20,
+            composition: { small: 0.45, medium: 0.40, large: 0.15 } },
+          { kind: 'comet', intervalMs: 1800, count: 5 },
+        ] },
+      // 17. Усиленный Дредноут+ (2 фазы: стандарт → очереди + щит)
       { durationMs: 15000, cooldownMs: 3000, bosses: ['dreadnought+'],
         spawns: [
           { kind: 'asteroid', intervalMs: 1300, count: 12,
@@ -613,7 +666,7 @@ export const BALANCE = {
           { kind: 'enemy', intervalMs: 8000, count: 2 },
           { kind: 'armored', intervalMs: 8000, count: 1 },
         ] },
-      // 12. Усиленный Фантом+ (2 фазы: стрельба → телепорт + мины)
+      // 18. Усиленный Фантом+ (2 фазы: стрельба → телепорт + мины)
       { durationMs: 16000, cooldownMs: 3000, bosses: ['phantom+'],
         spawns: [
           { kind: 'asteroid', intervalMs: 1100, count: 12,
@@ -622,7 +675,16 @@ export const BALANCE = {
           { kind: 'enemy', intervalMs: 6500, count: 2 },
           { kind: 'burst', intervalMs: 7000, count: 1 },
         ] },
-      // 13. Усиленный Левиафан+ (2 фазы: круг → спираль + ускорение)
+      // 19. Штурм: одни корабли и очереди, камней почти нет
+      { durationMs: 14000, cooldownMs: 3000,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1800, count: 6,
+            composition: { small: 0.40, medium: 0.40, large: 0.20 } },
+          { kind: 'comet', intervalMs: 2200, count: 4 },
+          { kind: 'enemy', intervalMs: 5000, count: 3 },
+          { kind: 'burst', intervalMs: 6000, count: 2 },
+        ] },
+      // 20. Усиленный Левиафан+ (2 фазы: круг → спираль + ускорение)
       { durationMs: 18000, cooldownMs: 4000, bosses: ['leviathan+'],
         spawns: [
           { kind: 'asteroid', intervalMs: 950, count: 14,
@@ -632,7 +694,16 @@ export const BALANCE = {
           { kind: 'armored', intervalMs: 6000, count: 2 },
           { kind: 'orbital', intervalMs: 11000, count: 1 },
         ] },
-      // 14. Осада: Дредноут++ (начинает с фазы 2) + Фантом++
+      // 21. Кольцо: орбитальные в кольце и броня по периметру
+      { durationMs: 15000, cooldownMs: 3000,
+        spawns: [
+          { kind: 'asteroid', intervalMs: 1400, count: 10,
+            composition: { small: 0.30, medium: 0.50, large: 0.20 } },
+          { kind: 'orbital', intervalMs: 8500, count: 2 },
+          { kind: 'armored', intervalMs: 6500, count: 2 },
+          { kind: 'comet', intervalMs: 2400, count: 3 },
+        ] },
+      // 22. Осада: Дредноут++ (начинает с фазы 2) + Фантом++
       { durationMs: 18000, cooldownMs: 4000, bosses: ['dreadnought++', 'phantom++'],
         spawns: [
           { kind: 'asteroid', intervalMs: 850, count: 16,
@@ -641,7 +712,7 @@ export const BALANCE = {
           { kind: 'enemy', intervalMs: 5000, count: 3 },
           { kind: 'burst', intervalMs: 6000, count: 2 },
         ] },
-      // 15. Левиафан++ — финал (3 фазы: круг → спираль → лазеры), повторяется
+      // 23. Левиафан++ — финал (3 фазы: круг → спираль → лазеры), повторяется
       { durationMs: 20000, cooldownMs: 4000, bosses: ['leviathan++'],
         spawns: [
           { kind: 'asteroid', intervalMs: 800, count: 16,

@@ -99,6 +99,7 @@ export function createWorld({
     wavePhase: 'spawning',
     waveTimer: 0,
     waveSpawns: {},
+    waveBossKeys: [],        // боссы текущей волны: пока они живы — следующая волна не идёт
     pendingComets: [],
     nextPendingCometId: 1,
     pendingBosses: [],      // В2: боссы, которых ещё надо ввести (после warnMs)
@@ -1410,9 +1411,26 @@ function startWave(world, wave) {
   world.wavePhase = 'spawning';
   world.waveTimer = wave.durationMs;
   world.waveSpawns = {};
+  world.waveBossKeys = (wave.bosses || []).slice();
   for (const key of (wave.bosses || [])) {
     spawnBoss(world, key);
   }
+}
+
+// Волна с боссом тормозит очередь: следующая волна не начинается, пока все боссы
+// текущей волны (включая ещё не введённых) не будут побеждены. Клоны босса не
+// считаются: их убийство не обязательно для перехода к следующей волне.
+function waveBossAlive(world) {
+  const keys = world.waveBossKeys || [];
+  if (!keys.length) return false;
+  for (const pb of (world.pendingBosses || [])) {
+    if (keys.includes(pb.key)) return true;
+  }
+  for (const b of (world.bosses || [])) {
+    if (b.dead || b.clone) continue;
+    if (keys.includes(b.key)) return true;
+  }
+  return false;
 }
 
 function destroyBoss(world, boss, owner) {
@@ -2416,9 +2434,10 @@ export function stepWorld(world, dtSec, inputs) {
     if (list.length) {
       const idx = Math.min(world.waveIndex, list.length - 1);
       const wave = list[idx];
-      world.waveTimer -= dt * 1000;
+      const spawning = world.wavePhase === 'spawning' || world.wavePhase === 'awaitBoss';
+      if (spawning) world.waveTimer -= dt * 1000; // в awaitBoss таймер уже 0 — стоим на месте
 
-      if (world.wavePhase === 'spawning') {
+      if (spawning) {
         // частота появления: по каждому виду спавним по таймеру,
         // пока не исчерпан лимит вида за волну или потолок на арене
         for (const entry of (wave.spawns || [])) {
@@ -2427,22 +2446,34 @@ export function stepWorld(world, dtSec, inputs) {
           if (!handler) continue;
           const def = K[kind] || {};
           const cfg = Object.assign({}, def, entry);
+          const chance = cfg.spawnChance != null ? cfg.spawnChance : 1; // шанс спавна вида за волну
           let st = world.waveSpawns[kind] || (world.waveSpawns[kind] = { timer: 500, spawned: 0 });
           st.timer -= dt * 1000;
           if (st.spawned < cfg.count && st.timer <= 0) {
-            if (handler.countAlive(world) < cfg.max) {
+            if (handler.countAlive(world) < cfg.max && (chance >= 1 || world.rng() < chance)) {
               handler.spawn(world, cfg);
               st.spawned++;
             }
             st.timer += cfg.intervalMs * rand(world.rng, 0.75, 1.25);
           }
         }
-        // конец волны: по времени
-        if (world.waveTimer <= 0) {
+        // конец спавна волны: по времени — либо, если жив босс этой волны,
+        // переходим в ожидание (волна держится, спавн её состава продолжается)
+        if (world.wavePhase === 'spawning' && world.waveTimer <= 0) {
+          if (waveBossAlive(world)) {
+            world.wavePhase = 'awaitBoss';
+          } else {
+            world.wavePhase = 'cooldown';
+            world.waveTimer = wave.cooldownMs;
+          }
+        }
+        // босс побеждён — ждать больше нечего, отсчёт охлаждения с начала
+        if (world.wavePhase === 'awaitBoss' && !waveBossAlive(world)) {
           world.wavePhase = 'cooldown';
           world.waveTimer = wave.cooldownMs;
         }
       } else { // cooldown — период охлаждения после волны
+        world.waveTimer -= dt * 1000;
         if (world.waveTimer <= 0) {
           if (world.waveIndex < list.length - 1) world.waveIndex++;
           startWave(world, list[Math.min(world.waveIndex, list.length - 1)]);

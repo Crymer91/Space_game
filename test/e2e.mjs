@@ -588,6 +588,93 @@ try {
     }
   }
 
+  // ---- Волна с боссом тормозит очередь волн до победы босса ----
+  {
+    const fresh = () => {
+      const w = createWorld({ playerIds: ['u'], nicknames: { u: 'Unit' }, durationMs: null, seed: 77 });
+      const p = w.players[0];
+      p.lives = 9999;
+      p.invulnUntil = 1e9;
+      return { w, p };
+    };
+    const stepN = (w, n) => {
+      for (let i = 0; i < n; i++) stepWorld(w, 1 / 60, { u: { mx: 0, my: 0, shoot: false } });
+    };
+    // индексы волн ищем динамически, чтобы правки списка волн не ломали тест
+    const waveIdxOf = (pred) => BALANCE.waves.list.findIndex(pred);
+    const bossWaveIdx = waveIdxOf((w) => (w.bosses || []).includes('dreadnought') && !(w.bosses || []).some((k) => k.includes('+')));
+    const cometWaveIdx = waveIdxOf((w) => (w.spawns || []).some((s) => s.kind === 'comet' && s.count >= 8));
+    const waveDur = BALANCE.waves.list[bossWaveIdx].durationMs;
+    // 1) обычная волна (без босса) идёт по таймеру как раньше
+    {
+      const { w } = fresh();
+      w.waveIndex = 0;
+      w.wavePhase = 'spawning';
+      w.waveTimer = 0;
+      stepN(w, 1);
+      ok(w.waveIndex === 0 && w.wavePhase === 'cooldown', 'волна без босса: конец спавна → охлаждение');
+      stepN(w, Math.ceil((BALANCE.waves.list[0].cooldownMs + 100) / (1000 / 60)));
+      ok(w.waveIndex === 1, `волна без босса: следующая волна стартует по таймеру (индекс ${w.waveIndex})`);
+    }
+    // 2) волна с боссом: пока босс жив — следующая волна не начинается
+    {
+      const { w } = fresh();
+      w.waveIndex = bossWaveIdx - 1;
+      w.wavePhase = 'cooldown';
+      w.waveTimer = 0;
+      stepN(w, 1); // переход на волну с боссом
+      ok(w.waveIndex === bossWaveIdx && (w.waveBossKeys || []).includes('dreadnought'),
+        `старт волны с боссом: босс записан в waveBossKeys (индекс ${w.waveIndex})`);
+      // ждём входа босса (warnMs) + полную длительность волны + запас
+      stepN(w, Math.ceil((BALANCE.bosses.warnMs + waveDur + 8000) / (1000 / 60)));
+      ok(w.bosses.some((b) => b.key === 'dreadnought' && !b.dead), 'босс волны жив');
+      ok(w.waveIndex === bossWaveIdx, `пока босс жив, индекс волны не растёт (${w.waveIndex})`);
+      ok(w.wavePhase === 'awaitBoss', `после спавна волна ждёт босса (фаза ${w.wavePhase})`);
+      ok((w.waveSpawns.asteroid && w.waveSpawns.asteroid.spawned) > 0,
+        'состав волны продолжает спавниться, пока ждём босса');
+    }
+    // 3) босс побеждён — волна отпускает очередь
+    {
+      const { w } = fresh();
+      w.waveIndex = bossWaveIdx - 1;
+      w.wavePhase = 'cooldown';
+      w.waveTimer = 0;
+      stepN(w, Math.ceil((1 + BALANCE.bosses.warnMs + waveDur + 1000) / (1000 / 60)));
+      ok(w.wavePhase === 'awaitBoss', `перед убийством: волна в ожидании босса (${w.wavePhase})`);
+      for (const b of w.bosses) b.dead = true;
+      stepN(w, 1);
+      ok(w.wavePhase === 'cooldown', `после победы босса волна уходит в охлаждение (${w.wavePhase})`);
+      stepN(w, Math.ceil((BALANCE.waves.list[bossWaveIdx].cooldownMs + 200) / (1000 / 60)));
+      ok(w.waveIndex === bossWaveIdx + 1, `после победы босса идёт следующая волна (индекс ${w.waveIndex})`);
+      ok(w.wavePhase === 'spawning', 'следующая волна стартует в фазе спавна');
+    }
+    // 4) spawnChance вида режет частоту спавна (кометы появляются вдвое реже)
+    {
+      const orig = BALANCE.enemyKinds.comet.spawnChance;
+      const runWave = (chance) => {
+        BALANCE.enemyKinds.comet.spawnChance = chance;
+        try {
+          const w = createWorld({ playerIds: ['u'], nicknames: { u: 'Unit' }, durationMs: null, seed: 909 });
+          const p = w.players[0];
+          p.lives = 9999;
+          p.invulnUntil = 1e9;
+          w.waveIndex = cometWaveIdx - 1; // с перехода попадаем в «кометный ливень»
+          w.wavePhase = 'cooldown';
+          w.waveTimer = 0;
+          stepN(w, Math.ceil(13000 / (1000 / 60)));
+          return w.waveSpawns.comet ? w.waveSpawns.comet.spawned : 0;
+        } finally {
+          BALANCE.enemyKinds.comet.spawnChance = orig;
+        }
+      };
+      ok(orig === 0.5, `в балансе шанс спавна кометы = 0.5 (было ${orig})`);
+      const all = runWave(1);
+      const none = runWave(0);
+      ok(all > 0, `со spawnChance = 1 кометы спавнятся (попыток: ${all})`);
+      ok(none === 0, `со spawnChance = 0 кометы не спавнятся (попыток: ${none})`);
+    }
+  }
+
   a.disconnect();
   b.disconnect();
   await sleep(400);
