@@ -1,9 +1,23 @@
 // Мультиплеер: сервер авторитетен. Клиент шлёт инпуты (~20 Гц) и рисует
 // интерполированные снапшоты с задержкой ~120 мс.
+import { BALANCE } from '/shared/balance.js';
+
 const INTERP_DELAY_MS = 120;
 const SEND_INTERVAL_MS = 50;
 
+const W = BALANCE.world.width;
+const H = BALANCE.world.height;
+
 function lerp(a, b, t) { return a + (b - a) * t; }
+
+// Интерполяция с учётом заворачивания по краям арены: астероид, вышедший за
+// правый край, должен появиться у левого, а не пролететь через всё поле.
+function lerpWrap(a, b, t, span) {
+  let d = (b - a) % span;
+  if (d > span / 2) d -= span;
+  if (d < -span / 2) d += span;
+  return a + d * t;
+}
 
 function lerpAngle(a, b, t) {
   let d = (b - a) % (Math.PI * 2);
@@ -85,7 +99,14 @@ export function startMultiGame({ net, renderer, input, selfId, onOver, onBuyResu
     const csByIdA = new Map(a.cs.map((x) => [x.i, x]));
     const as = b.as.map((x) => {
       const xa = asByIdA.get(x.i);
-      return xa ? { ...x, x: lerp(xa.x, x.x, t), y: lerp(xa.y, x.y, t) } : x;
+      if (!xa) return x;
+      // кометы не заворачиваются — они улетают и исчезают
+      if (x.tp === 'comet') return { ...x, x: lerp(xa.x, x.x, t), y: lerp(xa.y, x.y, t) };
+      return {
+        ...x,
+        x: lerpWrap(xa.x, x.x, t, W),
+        y: lerpWrap(xa.y, x.y, t, H),
+      };
     });
     const cs = b.cs.map((x) => {
       const xa = csByIdA.get(x.i);
