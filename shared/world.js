@@ -6,6 +6,11 @@ import { BALANCE } from './balance.js';
 
 const B = BALANCE;
 
+// Запас за край арены для заворачивающихся астероидов. Спавнить дальше этого
+// запаса нельзя: wrap() телепортирует тело на противоположную кромку, и астероид
+// заметно прыгает по краю экрана, прежде чем влететь в поле.
+const ASTEROID_WRAP_MARGIN = 10;
+
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -347,13 +352,16 @@ function spawnAsteroid(world, type, atX, atY, speedScale = 1) {
   const def = asteroidDef(type);
   const w = B.world.width;
   const h = B.world.height;
+  const r = rand(world.rng, def.radiusMin, def.radiusMax);
   let x = atX;
   let y = atY;
   if (x == null || y == null) {
+    // спавн ровно на границе wrap'а: астероид целиком за краем кадра,
+    // но не выпадает из заворачиваемой полосы и не телепортируется
+    const m = r + ASTEROID_WRAP_MARGIN;
     // спавн на случайной кромке, подальше от живых кораблей
     for (let attempt = 0; attempt < 8; attempt++) {
       const side = randInt(world.rng, 0, 3);
-      const m = 60;
       if (side === 0) { x = rand(world.rng, 0, w); y = -m; }
       else if (side === 1) { x = w + m; y = rand(world.rng, 0, h); }
       else if (side === 2) { x = rand(world.rng, 0, w); y = h + m; }
@@ -377,7 +385,7 @@ function spawnAsteroid(world, type, atX, atY, speedScale = 1) {
     y,
     vx: Math.cos(ang) * sp,
     vy: Math.sin(ang) * sp,
-    r: rand(world.rng, def.radiusMin, def.radiusMax),
+    r,
     hp: def.hp,
     maxHp: def.hp,
     rot: rand(world.rng, 0, Math.PI * 2),
@@ -1993,8 +2001,8 @@ export function stepWorld(world, dtSec, inputs) {
         a.dead = true;
       }
     } else {
-      a.x = wrap(a.x, w, a.r + 10);
-      a.y = wrap(a.y, h, a.r + 10);
+      a.x = wrap(a.x, w, a.r + ASTEROID_WRAP_MARGIN);
+      a.y = wrap(a.y, h, a.r + ASTEROID_WRAP_MARGIN);
     }
   }
 
